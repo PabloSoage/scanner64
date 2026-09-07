@@ -43,7 +43,8 @@ solo Python, así que hay que ser exacto sobre el alcance de la verificación:
 | **Vectores de test del testbench** | ✅ **Generados y validados** | `model/gen_vectors.py` |
 | **Simulación de `ddc_channel`** | ✅ **Verificado** | XSim (Vivado 2026.1) — 40 salidas comparadas, **0 discrepancias** |
 | **Simulación de `scanner_top`** | ❌ **Sin comprobar** | No hay testbench del banco de N canales |
-| **Síntesis, cierre de tiempos, recursos** | ❌ **Sin comprobar** | Requiere Vivado |
+| **Síntesis y recursos de `ddc_channel`** | ✅ **Medido** | Síntesis OOC, Vivado 2026.1 — 0 errores, 0 warnings críticos |
+| **Síntesis del banco completo, cierre de tiempos** | ❌ **Sin comprobar** | Falta el barrido de `N_CH` con implementación |
 | **Comportamiento en hardware** | ❌ **Sin comprobar** | Requiere la placa |
 
 **Lo primero que debes hacer es ejecutar el testbench.** Si pasa, el RTL está bien transcrito.
@@ -146,7 +147,19 @@ directorio de trabajo del simulador.
 
 Debe imprimir `RESULTADO: PASA`.
 
-### 3. Llevarlo a la placa
+### 3. Sintetizar y medir recursos
+
+Sin placa y sin crear proyecto. Desde un directorio de trabajo vacío:
+
+```bash
+cp <repo>/rtl/sin_lut.mem .
+vivado -mode batch -nojournal -notrace -source <repo>/syn/ooc_channel.tcl
+```
+
+Sintetiza **un** `ddc_channel` *out-of-context* para `xck26-sfvc784-2LV-c` y deja `util.rpt`
+y `timing.rpt`. Los informes de la última ejecución están en [`syn/results/`](syn/results).
+
+### 4. Llevarlo a la placa
 
 1. Proyecto Vivado para **XCK26-SFVC784-2LV-C** (el SoM de la KV260).
 2. Diagrama de bloques: Zynq UltraScale+ MPSoC → AXI Interconnect → tu envoltorio AXI4-Lite
@@ -155,22 +168,38 @@ Debe imprimir `RESULTADO: PASA`.
 4. Reloj de la PL: empieza en 100 MHz. Sube hasta donde cierre tiempos — ese número **es** el
    resultado del experimento.
 
-### 4. Exprimirla de verdad
+### 5. Exprimirla de verdad
 
-El experimento interesante es **subir `N_CH` hasta que deje de caber o de cerrar tiempos**, e ir
-anotando:
+El experimento interesante es **subir `N_CH` hasta que deje de caber o de cerrar tiempos**.
 
-| N_CH | DSP48 usados | LUT | Fmax | Gop/s sostenidos |
-|---|---|---|---|---|
-| 8 | | | | |
-| 16 | | | | |
-| 32 | | | | |
-| 64 | | | | |
-| 128 | | | | |
+Primer dato medido, por síntesis *out-of-context* de **un** `ddc_channel` sobre
+`xck26-sfvc784-2LV-c` (Vivado 2026.1, `T = 10 ns`):
 
-El ZU5EV tiene **1248 DSP48**. A ~4 DSP por canal el techo aritmético está sobre los 300 canales;
-en la práctica manda el rutado bastante antes. Encontrar ese punto es exactamente "exprimir la
-FPGA", y el número te sirve para dimensionar el diseño de verdad.
+| N_CH | DSP48E2 | CLB LUT | FF | BRAM tile | Fmax | Gop/s sostenidos |
+|---|---|---|---|---|---|---|
+| **1** | **3** | **600** | **677** | **1** | **220,6 MHz** | — |
+| 8 | | | | | | |
+| 16 | | | | | | |
+| 32 | | | | | | |
+| 64 | | | | | | |
+| 128 | | | | | | |
+
+**Y ese primer dato ya cambia el diseño.** El recurso crítico no son los multiplicadores:
+
+| Recurso | Disponible en el ZU5EV | Techo de canales |
+|---|---|---|
+| DSP48E2 | 1248 | 416 |
+| CLB LUT | 117 120 | 195 |
+| **BRAM tile** | **144** | **144** |
+
+El muro es la **BRAM**, porque cada `nco` infiere hoy su propia ROM de coseno y no se comparte
+entre canales. Hasta que eso se resuelva —LUT multipuerto compartida, o generar el seno con
+CORDIC y prescindir de la tabla— no tiene sentido intentar pasar de ~144 canales, y los DSP
+seguirán al 35 % de ocupación sin usar.
+
+Ojo con el Fmax: 220 MHz es **post-síntesis y optimista**. Falta rutar, y en modo OOC sin
+`HD.CLK_SRC` tampoco se modela el *skew* de reloj. El número bueno sale de la implementación
+completa.
 
 ---
 

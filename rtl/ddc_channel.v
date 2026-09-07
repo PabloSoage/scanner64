@@ -7,13 +7,20 @@
 //                           v
 //            [retardo] --> (x) --> CIC Q --> >> --> Q
 //
-// Coste por canal (estimacion para Zynq UltraScale+):
-//   2 DSP48E2   (los dos multiplicadores del mezclador)
-//   ~1/2 BRAM   (la LUT del NCO, compartible entre canales)
-//   ~250 LUT    (los acumuladores del CIC, que no usan DSP)
+// Coste por canal, MEDIDO por sintesis out-of-context
+// (Vivado 2026.1, xck26-sfvc784-2LV-c, un solo canal):
+//   3 DSP48E2     la estimacion inicial de 2 se quedaba corta
+//   1 BRAM tile   2x RAMB18E2: la LUT del NCO, hoy SIN compartir
+//   600 CLB LUT   los acumuladores del CIC, que no usan DSP
+//   677 FF
+//   Fmax 220 MHz  post-sintesis con T=10 ns. Optimista: aun sin rutar.
 //
-// Con 1248 DSP en el ZU5EV de la KV260, el limite practico no son los
-// multiplicadores sino el rutado. 64 canales usan ~128 DSP: un 10 %.
+// El recurso critico NO son los multiplicadores. Techos en el ZU5EV:
+//   por DSP   1248 / 3   = 416 canales
+//   por LUT   117120/600 = 195 canales
+//   por BRAM  144 / 1    = 144 canales   <-- el muro real
+//
+// Compartir la LUT del NCO entre canales es lo unico que mueve ese techo.
 //
 // Verificado: model/rtl_check.py compara la semantica de este RTL contra los
 // vectores dorados de model/ddc_model.py. 0 discrepancias.
