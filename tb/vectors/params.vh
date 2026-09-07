@@ -1,0 +1,17 @@
+// Generado por model/gen_vectors.py — no editar a mano.
+
+localparam integer P_IN_W       = 16;
+localparam integer P_OUT_W      = 18;
+localparam integer P_PHASE_W    = 32;
+localparam integer P_LUT_ADDR_W = 10;
+localparam integer P_LUT_W      = 16;
+localparam integer P_MIX_W      = 18;
+localparam integer P_CIC_N      = 3;
+localparam integer P_CIC_R      = 64;
+localparam integer P_CIC_M      = 1;
+localparam integer P_CIC_W      = 36;
+localparam integer P_CIC_GROWTH = 18;
+
+localparam [P_PHASE_W-1:0] P_FTW = 32'h1999999a;  // 10.000 MHz @ 100 MSPS
+localparam integer P_N_STIM = 3072;
+localparam integer P_N_GOLD = 48;

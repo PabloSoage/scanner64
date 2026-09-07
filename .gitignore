@@ -1,0 +1,34 @@
+# --- Vivado / XSim ---
+xsim.dir/
+.Xil/
+*.jou
+*.log
+*.pb
+*.wdb
+*.str
+*.vvp
+webtalk*
+vivado*.backup.jou
+vivado*.backup.log
+
+# Copia de trabajo de la LUT que el simulador necesita en su cwd.
+# La fuente valida es rtl/sin_lut.mem
+/sin_lut.mem
+
+# --- Proyectos y resultados de sintesis generados ---
+build/
+work/
+*.xpr
+*.runs/
+*.cache/
+*.hw/
+*.ip_user_files/
+*.sim/
+
+# --- Python ---
+__pycache__/
+*.pyc
+
+# --- Editor ---
+.history/
+.vscode/
