@@ -24,6 +24,16 @@
 
 `default_nettype none
 
+// Mapeo de la aritmetica: por defecto los sumadores van a CLB. Sintetizando
+// con -verilog_define CIC_USE_DSP=1 se mandan a los DSP48, que llevan un
+// acumulador de 48 bits sin usar. Cuesta 3 DSP por CIC y ahorra 145 LUT.
+//
+// No es una mejora, es un INTERCAMBIO: elige segun que recurso te sobre en tu
+// diseno. Los numeros medidos estan en el README, seccion "Exprimirla de
+// verdad". No cambia la funcion ni un bit, solo donde se implementa.
+`ifdef CIC_USE_DSP
+(* use_dsp = "logic" *)
+`endif
 module cic_decim #(
     parameter integer IN_W  = 18,
     parameter integer N     = 3,      // etapas

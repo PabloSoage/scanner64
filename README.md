@@ -248,9 +248,47 @@ global **empeora**: 144 → 127. Aunque la BRAM saliera gratis, el techo solo su
 retorno máximo de esta optimización es **+15 %**, y cualquier implementación que cueste más de
 unos 30 LUT por canal lo destruye.
 
-**La palanca no es la BRAM, es el LUT.** Son ~703 por canal, casi todo acumuladores del CIC, con
-los DSP al 58 % de su techo sin usar. Mover parte de la aritmética del CIC a los DSP48 que
-sobran es lo que movería el número de verdad.
+### El CIC en los DSP: un intercambio, no una mejora
+
+Los ~703 LUT por canal son casi todos acumuladores del CIC de 36 bits, mientras los DSP48
+—que llevan dentro un acumulador de 48 bits— están a menos de la mitad de su techo. Sintetizar
+con `-verilog_define CIC_USE_DSP=1` los manda al DSP:
+
+| | LUT/canal | DSP/canal | tile/canal | Fmax | Techo LUT | Techo DSP | Techo BRAM | **Muro** |
+|---|---|---|---|---|---|---|---|---|
+| Por defecto | 703 | 5,0 | 1,0 | 220,6 MHz | 166 | 249 | 144 | **144** |
+| `CIC_USE_DSP=1` | **419** | 11,0 | 1,0 | 220,6 MHz | 280 | **113** | 144 | **113** |
+
+**−284 LUT por canal, +6 DSP, y el Fmax no se mueve.** Pero el techo *baja*, de 144 a 113: el
+cuello pasa del BRAM al DSP. Por eso no es el comportamiento por defecto.
+
+Donde sí sirve es cuando el escáner no es lo único que va en el chip. A 64 canales, que es lo
+realista una vez metes el AXI4-Lite, el DMA y el resto del sistema:
+
+| | LUT | DSP | BRAM |
+|---|---|---|---|
+| Por defecto | 38,5 % | 25,6 % | 44,4 % |
+| `CIC_USE_DSP=1` | **23,0 %** | 56,4 % | 44,4 % |
+
+Liberas un 15 % del chip en LUT a cambio de DSP que de todas formas no estabas usando. **Elige
+según el recurso que te falte**, no por defecto.
+
+### Resumen: el diseño está en un óptimo plano
+
+Los tres recursos se agotan casi a la vez —144 por BRAM, 166 por LUT, 249 por DSP— y por eso
+ninguna optimización de mapeo mueve el techo:
+
+| Cambio | Muro resultante |
+|---|---|
+| Nada | **144** |
+| Compartir la LUT del NCO (`-max_bram`) | 127 |
+| CIC en DSP | 113 |
+| Ambas a la vez | 151 |
+
+El mejor caso son 151 canales, un +5 % a cambio de bastante complejidad. **Para pasar de ahí
+hace falta cambiar la arquitectura, no el mapeo.** La vía con recorrido de verdad son los
+peines: trabajan a 1/64 de la tasa de entrada, así que un solo juego de peines multiplexado
+podría dar servicio a decenas de canales, en lugar de replicarlos por canal como ahora.
 
 Ojo con el Fmax: 220 MHz es **post-síntesis y optimista**. Falta rutar, y en modo OOC sin
 `HD.CLK_SRC` tampoco se modela el *skew* de reloj. El número bueno sale de la implementación
@@ -289,6 +327,10 @@ Ancho de banda por canal ≈ 780 kHz. Suficiente para FM de banda estrecha, PMR4
 - **Sin compensación de la caída del CIC.** Un CIC de 3 etapas atenúa hacia el borde de la banda
   (~3 dB en el 20 % superior). Para medir potencia no importa; para demodular hay que añadir un
   FIR compensador. No está.
+- **Los peines están replicados por canal.** Trabajan a 1/64 de la tasa de entrada, así que
+  están parados el 98 % del tiempo. Multiplexar un solo juego entre muchos canales es la
+  optimización con recorrido real, y la única que movería el techo de forma apreciable.
+
 - **Sin AXI4-Lite.** La interfaz de registros es síncrona y sencilla a propósito. Envolverla es
   un paso de Vivado.
 - **La LUT no está compartida entre canales.** Cada `nco` infiere su propia BRAM. Parece el
