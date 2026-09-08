@@ -182,7 +182,36 @@ tonos y dos sobre banda vacía, con **59 dB** de margen entre unos y otros.
 > da 160, T3 da 3, T4 da 4 y T5 da 4. Un testbench que nunca has visto fallar no sabes si
 > comprueba algo.
 
-### 3. Sintetizar y medir recursos
+### 3. Abrirlo en la GUI de Vivado
+
+Para ver las formas de onda, el esquemático o los informes con el raton en vez de por consola,
+[`syn/make_project.tcl`](syn/make_project.tcl) monta el proyecto entero:
+
+```bash
+vivado -mode batch -source <repo>/syn/make_project.tcl -tclargs C:/kv/s64
+vivado C:/kv/s64/scanner64.xpr
+```
+
+Deja el RTL y los tres testbenches cargados, el *include path* puesto y los vectores copiados
+donde XSim los busca. Dentro:
+
+| En el panel *Flow Navigator* | Qué ves |
+|---|---|
+| **Run Simulation → Run Behavioral Simulation** | Corre el testbench hasta su `$finish`. El veredicto sale en la consola **Tcl Console**; las señales, en la ventana de ondas |
+| **Open Elaborated Design → Schematic** | El circuito **tal y como lo escribiste**: sumadores, registros, multiplexores. Es el dibujo del RTL |
+| **Run Synthesis → Open Synthesized Design → Schematic** | El circuito **tal y como cabe en el chip**: LUT, FF, DSP48, RAMB18. Aquí se ve de verdad dónde se va cada recurso |
+| **Open Synthesized Design → Report Utilization** | La tabla de recursos, interactiva y por jerarquía: qué módulo gasta qué |
+| **Open Synthesized Design → Report Timing Summary** | El WNS y los caminos críticos, clicables hasta la señal concreta |
+
+Para cambiar de testbench: *Sources → Simulation Sources*, botón derecho sobre el que quieras →
+**Set as Top**. Por defecto está puesto `tb_scanner_top`.
+
+En la ventana de ondas solo aparecen las señales del nivel superior. Para ver el interior —los
+integradores, el estado de los peines— despliega la jerarquía en el panel **Scope**, selecciona
+las señales que te interesen y arrástralas a la forma de onda; luego **Relaunch Simulation**
+para que se registren desde el principio.
+
+### 4. Sintetizar y medir recursos
 
 Sin placa y sin crear proyecto. Desde un directorio de trabajo vacío:
 
@@ -194,7 +223,7 @@ vivado -mode batch -nojournal -notrace -source <repo>/syn/ooc_channel.tcl
 Sintetiza **un** `ddc_channel` *out-of-context* para `xck26-sfvc784-2LV-c` y deja `util.rpt`
 y `timing.rpt`. Los informes de la última ejecución están en [`syn/results/`](syn/results).
 
-### 4. Llevarlo a la placa
+### 5. Llevarlo a la placa
 
 1. Proyecto Vivado para **XCK26-SFVC784-2LV-C** (el SoM de la KV260).
 2. Diagrama de bloques: Zynq UltraScale+ MPSoC → AXI Interconnect → tu envoltorio AXI4-Lite
@@ -203,7 +232,7 @@ y `timing.rpt`. Los informes de la última ejecución están en [`syn/results/`]
 4. Reloj de la PL: empieza en 100 MHz. Sube hasta donde cierre tiempos — ese número **es** el
    resultado del experimento.
 
-### 5. Exprimirla de verdad
+### 6. Exprimirla de verdad
 
 El experimento interesante es **subir `N_CH` hasta que deje de caber o de cerrar tiempos**.
 

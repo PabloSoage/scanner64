@@ -32,3 +32,10 @@ __pycache__/
 # --- Editor ---
 .history/
 .vscode/
+
+# Proyectos de Vivado generados por syn/make_project.tcl
+scanner64_vivado/
+*.xpr
+*.cache/
+*.hw/
+*.ip_user_files/
