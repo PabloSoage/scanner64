@@ -22,8 +22,13 @@
 //
 // Compartir la LUT del NCO entre canales es lo unico que mueve ese techo.
 //
-// Verificado: model/rtl_check.py compara la semantica de este RTL contra los
-// vectores dorados de model/ddc_model.py. 0 discrepancias.
+// Desde la separacion en piezas, esto es ddc_front (NCO + mezclador +
+// integradores) mas dos comb_chain y la normalizacion. En un banco de muchos
+// canales conviene NO usar este modulo, sino ddc_front + comb_bank, que
+// comparte los peines entre canales. Ver el README.
+//
+// Verificado: tb_ddc_channel compara contra los vectores dorados de
+// model/ddc_model.py. 0 discrepancias.
 // ---------------------------------------------------------------------------
 
 `default_nettype none
@@ -51,74 +56,33 @@ module ddc_channel #(
     output wire signed [OUT_W-1:0]    out_q
 );
 
-    // ---- NCO ---------------------------------------------------------------
-    wire signed [LUT_W-1:0] cos_v, sin_v;
+    // ---- Parte a tasa de entrada: NCO, mezclador e integradores -----------
+    wire                    dec_now;
+    wire signed [CIC_W-1:0] tap_i, tap_q;
 
-    nco #(
-        .PHASE_W    (PHASE_W),
-        .LUT_ADDR_W (LUT_ADDR_W),
-        .LUT_W      (LUT_W),
-        .LUT_FILE   (LUT_FILE)
-    ) u_nco (
-        .clk   (clk),
-        .rst_n (rst_n),
-        .en    (in_valid),
-        .ftw   (ftw),
-        .cos_o (cos_v),
-        .sin_o (sin_v)
+    ddc_front #(
+        .IN_W (IN_W), .PHASE_W (PHASE_W), .LUT_ADDR_W (LUT_ADDR_W),
+        .LUT_W (LUT_W), .MIX_W (MIX_W), .CIC_N (CIC_N), .CIC_R (CIC_R),
+        .CIC_W (CIC_W), .LUT_FILE (LUT_FILE)
+    ) u_front (
+        .clk (clk), .rst_n (rst_n), .ftw (ftw),
+        .in_valid (in_valid), .in_data (in_data),
+        .dec_now (dec_now), .tap_i (tap_i), .tap_q (tap_q)
     );
 
-    // ---- Retardo de la muestra, para alinearla con la salida del NCO -------
-    reg signed [IN_W-1:0] x_d1;
-    reg                   v_d1;
-
-    // ---- Mezclador complejo ------------------------------------------------
-    // El desplazamiento de LUT_W-1 deshace la escala de la LUT (32767 ~ 1.0).
-    // Aqui SI hay que saturar: una envolvente genera chasquidos en la senal.
-    localparam signed [MIX_W-1:0] MIX_MAX =  (1 <<< (MIX_W-1)) - 1;
-    localparam signed [MIX_W-1:0] MIX_MIN = -(1 <<< (MIX_W-1));
-
-    wire signed [IN_W+LUT_W-1:0] prod_i = x_d1 * cos_v;
-    wire signed [IN_W+LUT_W-1:0] prod_q = -x_d1 * sin_v;
-
-    wire signed [IN_W+LUT_W-1:0] shr_i = prod_i >>> (LUT_W-1);
-    wire signed [IN_W+LUT_W-1:0] shr_q = prod_q >>> (LUT_W-1);
-
-    reg signed [MIX_W-1:0] mix_i, mix_q;
-    reg                    mix_valid;
-
-    always @(posedge clk) begin
-        if (!rst_n) begin
-            x_d1      <= {IN_W{1'b0}};
-            v_d1      <= 1'b0;
-            mix_i     <= {MIX_W{1'b0}};
-            mix_q     <= {MIX_W{1'b0}};
-            mix_valid <= 1'b0;
-        end else begin
-            x_d1 <= in_data;
-            v_d1 <= in_valid;
-
-            mix_i <= (shr_i > MIX_MAX) ? MIX_MAX :
-                     (shr_i < MIX_MIN) ? MIX_MIN : shr_i[MIX_W-1:0];
-            mix_q <= (shr_q > MIX_MAX) ? MIX_MAX :
-                     (shr_q < MIX_MIN) ? MIX_MIN : shr_q[MIX_W-1:0];
-            mix_valid <= v_d1;
-        end
-    end
-
-    // ---- Decimadores CIC ---------------------------------------------------
+    // ---- Peines propios, a la tasa diezmada --------------------------------
     wire                    cic_valid_i, cic_valid_q;
     wire signed [CIC_W-1:0] cic_i, cic_q;
 
-    cic_decim #(.IN_W(MIX_W), .N(CIC_N), .R(CIC_R), .ACC_W(CIC_W)) u_cic_i (
+    comb_chain #(.N (CIC_N), .ACC_W (CIC_W)) u_comb_i (
         .clk (clk), .rst_n (rst_n),
-        .in_valid (mix_valid), .in_data (mix_i),
+        .dec_now (dec_now), .din (tap_i),
         .out_valid (cic_valid_i), .out_data (cic_i)
     );
 
-    cic_decim #(.IN_W(MIX_W), .N(CIC_N), .R(CIC_R), .ACC_W(CIC_W)) u_cic_q (
+    comb_chain #(.N (CIC_N), .ACC_W (CIC_W)) u_comb_q (
         .clk (clk), .rst_n (rst_n),
-        .in_valid (mix_valid), .in_data (mix_q),
+        .dec_now (dec_now), .din (tap_q),
         .out_valid (cic_valid_q), .out_data (cic_q)
     );
 

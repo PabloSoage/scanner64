@@ -60,12 +60,12 @@ module tb_comb_bank;
             );
             // El valor que el cic entrega a sus peines. Es lo que el banco
             // compartido tiene que recibir.
-            assign ref_ilast[g] = gen_ref[g].u_cic.integ_last_next;
+            assign ref_ilast[g] = gen_ref[g].u_cic.tap;
             assign din_flat[g*ACC_W +: ACC_W] = ref_ilast[g];
         end
     endgenerate
 
-    wire start = gen_ref[0].u_cic.decim_now;
+    wire start = gen_ref[0].u_cic.dec_now;
 
     // ---- Unidad bajo prueba: un solo juego de peines -----------------------
     wire                     bank_valid;

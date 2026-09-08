@@ -43,6 +43,7 @@ solo Python, así que hay que ser exacto sobre el alcance de la verificación:
 | **Vectores de test del testbench** | ✅ **Generados y validados** | `model/gen_vectors.py` |
 | **Simulación de `ddc_channel`** | ✅ **Verificado** | XSim (Vivado 2026.1) — 40 salidas comparadas, **0 discrepancias** |
 | **Simulación de `scanner_top`** | ✅ **Verificado** | XSim — 4 canales, 160 muestras comparadas, **0 discrepancias**, 6 pruebas |
+| **Peines compartidos vs. replicados** | ✅ **Verificado** | XSim — 368 comparaciones contra `cic_decim`, **0 discrepancias** |
 | **Síntesis y recursos de `ddc_channel`** | ✅ **Medido** | Síntesis OOC, Vivado 2026.1 — 0 errores, 0 warnings críticos |
 | **Síntesis del banco completo, cierre de tiempos** | ❌ **Sin comprobar** | Falta el barrido de `N_CH` con implementación |
 | **Comportamiento en hardware** | ❌ **Sin comprobar** | Requiere la placa |
@@ -92,8 +93,11 @@ scanner64/
 ├── rtl/
 │   ├── nco.v             Acumulador de fase + LUT de coseno en BRAM.
 │   ├── cic_decim.v       Decimador CIC. Sin multiplicadores.
-│   ├── ddc_channel.v     Un canal: NCO + mezclador + 2 CIC.
+│   ├── cic_integ.v       Integradores del CIC, a la tasa de entrada.
+│   ├── comb_chain.v      Peines de UNA unidad, a la tasa diezmada.
 │   ├── comb_bank.v       Peines compartidos por turnos entre 32 unidades.
+│   ├── ddc_front.v       NCO + mezclador + integradores. Sin peines.
+│   ├── ddc_channel.v     Un canal completo y autonomo: ddc_front + peines.
 │   ├── scanner_top.v     N canales en paralelo + medidor de potencia.
 │   ├── sig_source.v      Generador de señal en la PL (la "antena" sin ADC).
 │   └── sin_lut.mem       Generado por gen_vectors.py.
@@ -293,38 +297,54 @@ hace falta cambiar la arquitectura, no el mapeo.**
 ### Peines compartidos: `comb_bank`
 
 Y ahí sí hay recorrido. Los peines trabajan a **1/64 de la tasa de entrada**: están parados el
-98 % del tiempo y aun así hay seis acumuladores de 36 bits replicados **por canal**. Medido,
-eso cuesta **216 LUT y 360 FF por canal**.
+98 % del tiempo y aun así había seis acumuladores de 36 bits replicados **por canal**. Medido,
+eso costaba **216 LUT y 360 FF por canal**.
 
 [`rtl/comb_bank.v`](rtl/comb_bank.v) es un solo juego de peines que atiende 32 unidades por
 turnos —una unidad es una cadena I o Q, así que son 16 canales por banco—. Todos los canales
 diezman en el mismo ciclo, así que captura las 32 muestras de golpe y las procesa de una en
 una en los 32 ciclos siguientes, con margen de sobra antes del siguiente diezmado.
 
-| | LUT/canal | FF/canal | tile/canal | Techo LUT | Techo BRAM | **Muro** |
-|---|---|---|---|---|---|---|
-| Peines por canal (actual) | 703 | 821 | 1,0 | 166 | 144 | **144** |
-| **Peines compartidos** | **613** | 899 | **0,5** | 191 | 288 | **191** |
-| Sin peines (cota inalcanzable) | 486 | 461 | 0,5 | 241 | 288 | 241 |
+Está **integrado en `scanner_top`**, y estos son los números medidos, no proyectados:
 
-**144 → 191 canales, un +33 %**, y es la primera vez que algo mueve el techo de verdad.
+| N_CH | LUT/canal | FF/canal | tile/canal | Fmax | Techo LUT | Techo BRAM | **Muro** |
+|---|---|---|---|---|---|---|---|
+| 16 (antes) | 702 | 821 | 1,000 | 220,6 MHz | 166 | 144 | **144** |
+| 32 (antes) | 704 | 823 | 1,000 | 218,9 MHz | 166 | 144 | **144** |
+| **16** | **610** | 904 | **0,562** | 220,6 MHz | 192 | 256 | **192** |
+| **32** | **612** | 903 | **0,531** | 218,9 MHz | 191 | 271 | **191** |
+| **64** | **610** | 906 | **1,000** | 211,0 MHz | 191 | 144 | **144** |
 
-Hay un efecto secundario que no se buscaba: al bajar la presión de recursos **Vivado deja de
-replicar la ROM del NCO** y la BRAM cae sola a 0,5 tile por canal, sin forzar nada. Es lo que
-B5 intentaba conseguir a la fuerza y salía caro.
+**El LUT baja a ~610 por canal de forma estable, un −13 %, en todos los tamaños.** Eso es firme.
+
+El techo, en cambio, tiene trampa, y conviene decirlo claro: hasta 32 canales sube a ~191
+porque Vivado deja de replicar la ROM del NCO al bajar la presión de recursos. **A 64 canales
+vuelve a replicarla** y el muro cae otra vez a 144. Es la misma heurística de la herramienta que
+apareció en B5, y no depende del RTL.
+
+Forzarla no arregla nada: con `-max_bram` a 64 canales se consigue 0,5 tile/canal, pero cuesta
+los mismos **+214 LUT por canal** de siempre (610 → 824) y el techo baja a 142.
+
+| N_CH = 64 | LUT/canal | tile/canal | Techo LUT | Techo BRAM | **Muro** |
+|---|---|---|---|---|---|
+| BRAM automática | 610 | 1,000 | 191 | 144 | **144** |
+| BRAM forzada | 824 | 0,500 | 142 | 288 | **142** |
+
+Así que el estado real es: **−13 % de LUT garantizado, y un techo de 191 canales que solo se
+cobra si se resuelve la ROM del NCO sin pagar 214 LUT**. Eso pide instanciar explícitamente una
+primitiva de doble puerto (un XPM) en lugar de esperar a que Vivado infiera la buena, y no está
+hecho.
 
 El coste de `comb_bank` son 2034 LUT por banco, y el grueso **no** son los sumadores (4 restas
 de 36 bits, ~144 LUT) sino los **multiplexores 32:1** que leen el array de estado por índice.
-La vía para acercarse a la cota de 241 es poner ese estado en BRAM y pipelinear la ronda en
-tres etapas —leer, calcular, escribir—, que quita los multiplexores a cambio de 1-2 RAMB18 por
-banco. No está hecho.
+Bajar de ahí pide poner ese estado en BRAM y pipelinear la ronda en tres etapas —leer, calcular,
+escribir—. Tampoco está hecho.
 
-> **Estado:** `comb_bank` está verificado por equivalencia contra `cic_decim` —el RTL que ya
-> pasa los otros dos testbenches— con 368 comparaciones y 0 discrepancias, y el testbench está
-> validado por mutación. Lo que **falta** es integrarlo en `scanner_top`, que exige realinear
-> las salidas: con los peines compartidos cada canal sale en un ciclo distinto en vez de todos
-> a la vez. Los números de la tabla son la proyección medida de esa integración, no una
-> síntesis del banco ya integrado.
+> **Cambia la interfaz:** con los peines compartidos los canales **ya no salen todos en el mismo
+> ciclo**. El canal que ocupa la unidad *u* de su banco sale *u* ciclos después del diezmado, y
+> `ch_valid` marca cada uno lo suyo. Los valores son idénticos bit a bit —lo comprueban
+> `tb_comb_bank` y `tb_scanner_top`—, solo se reordenan en el tiempo. Si necesitas una foto
+> simultánea de todos los canales, espera a que la ronda termine: dura `UNITS_PER_BANK` ciclos.
 
 Ojo con el Fmax: 220 MHz es **post-síntesis y optimista**. Falta rutar, y en modo OOC sin
 `HD.CLK_SRC` tampoco se modela el *skew* de reloj. El número bueno sale de la implementación
@@ -363,9 +383,10 @@ Ancho de banda por canal ≈ 780 kHz. Suficiente para FM de banda estrecha, PMR4
 - **Sin compensación de la caída del CIC.** Un CIC de 3 etapas atenúa hacia el borde de la banda
   (~3 dB en el 20 % superior). Para medir potencia no importa; para demodular hay que añadir un
   FIR compensador. No está.
-- **Los peines siguen replicados por canal en `scanner_top`.** `comb_bank` ya resuelve esto y
-  está verificado, pero falta integrarlo: exige realinear las salidas, porque con los peines
-  compartidos cada canal sale en un ciclo distinto.
+- **La ROM del NCO se replica a partir de cierto tamaño.** Vivado usa 1 RAMB18 por canal hasta
+  32 canales y 2 a partir de 64, sin que el RTL cambie. Es lo que mantiene el techo en 144 en
+  vez de 191. Forzarlo con `-max_bram` cuesta +214 LUT/canal y sale peor; haría falta instanciar
+  una primitiva de doble puerto explícita.
 
 - **Sin AXI4-Lite.** La interfaz de registros es síncrona y sencilla a propósito. Envolverla es
   un paso de Vivado.

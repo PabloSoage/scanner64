@@ -111,33 +111,40 @@ module tb_scanner_top;
     integer checked  = 0;
 
     // ---- T2: comparacion de los N canales, muestra a muestra ---------------
-    // Todos los canales comparten clk, rst e in_valid y tienen la misma
-    // latencia, asi que ch_valid sube a la vez en todos. Se usa el del canal 0
-    // como referencia y se leen los N por acceso jerarquico: tap_ch solo deja
-    // observar uno por ciclo, y aqui hacen falta todos a la vez.
+    // Con los peines compartidos los canales YA NO salen en el mismo ciclo:
+    // cada uno sale en su turno dentro de la ronda. Asi que cada canal lleva
+    // su propio contador de salidas y se compara cuando sube SU ch_valid.
+    integer oi_ch [0:PB_N_CH-1];
     integer oi = 0;
     integer c;
+
+    initial for (c = 0; c < PB_N_CH; c = c + 1) oi_ch[c] = 0;
+
     always @(posedge clk) begin
-        if (rst_n && dut.ch_valid[0]) begin
-            if (oi < PB_N_GOLD) begin
-                for (c = 0; c < PB_N_CH; c = c + 1) begin
-                    if (dut.ch_i[c] !== gold_i[c*PB_N_GOLD + oi] ||
-                        dut.ch_q[c] !== gold_q[c*PB_N_GOLD + oi]) begin
-                        if (oi >= SKIP) begin
-                            e_out = e_out + 1;
-                            if (e_out <= 10)
-                                $display("  T2 ch%0d [%0d] esperado I=%0d Q=%0d   rtl I=%0d Q=%0d",
-                                         c, oi,
-                                         gold_i[c*PB_N_GOLD + oi], gold_q[c*PB_N_GOLD + oi],
-                                         dut.ch_i[c], dut.ch_q[c]);
-                        end else begin
-                            e_trans = e_trans + 1;
+        if (rst_n) begin
+            for (c = 0; c < PB_N_CH; c = c + 1) begin
+                if (dut.ch_valid[c]) begin
+                    if (oi_ch[c] < PB_N_GOLD) begin
+                        if (dut.ch_i[c] !== gold_i[c*PB_N_GOLD + oi_ch[c]] ||
+                            dut.ch_q[c] !== gold_q[c*PB_N_GOLD + oi_ch[c]]) begin
+                            if (oi_ch[c] >= SKIP) begin
+                                e_out = e_out + 1;
+                                if (e_out <= 10)
+                                    $display("  T2 ch%0d [%0d] esperado I=%0d Q=%0d   rtl I=%0d Q=%0d",
+                                             c, oi_ch[c],
+                                             gold_i[c*PB_N_GOLD + oi_ch[c]],
+                                             gold_q[c*PB_N_GOLD + oi_ch[c]],
+                                             dut.ch_i[c], dut.ch_q[c]);
+                            end else begin
+                                e_trans = e_trans + 1;
+                            end
                         end
+                        if (oi_ch[c] >= SKIP) checked = checked + 1;
                     end
-                    if (oi >= SKIP) checked = checked + 1;
+                    oi_ch[c] = oi_ch[c] + 1;
+                    if (c == 0) oi = oi_ch[0];
                 end
             end
-            oi = oi + 1;
         end
     end
 
