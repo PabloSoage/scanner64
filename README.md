@@ -93,12 +93,14 @@ scanner64/
 │   ├── nco.v             Acumulador de fase + LUT de coseno en BRAM.
 │   ├── cic_decim.v       Decimador CIC. Sin multiplicadores.
 │   ├── ddc_channel.v     Un canal: NCO + mezclador + 2 CIC.
+│   ├── comb_bank.v       Peines compartidos por turnos entre 32 unidades.
 │   ├── scanner_top.v     N canales en paralelo + medidor de potencia.
 │   ├── sig_source.v      Generador de señal en la PL (la "antena" sin ADC).
 │   └── sin_lut.mem       Generado por gen_vectors.py.
 ├── tb/
 │   ├── tb_ddc_channel.v  Testbench del canal: aritmetica contra el modelo.
 │   ├── tb_scanner_top.v  Testbench del banco: 6 pruebas, imprime PASA o FALLA.
+│   ├── tb_comb_bank.v    Equivalencia peines compartidos vs. replicados.
 │   └── vectors/          Generados por gen_vectors*.py.
 └── sw/
     └── bench_cpu.py      El mismo DSP en CPU, para medir el gap de verdad.
@@ -286,9 +288,43 @@ ninguna optimización de mapeo mueve el techo:
 | Ambas a la vez | 151 |
 
 El mejor caso son 151 canales, un +5 % a cambio de bastante complejidad. **Para pasar de ahí
-hace falta cambiar la arquitectura, no el mapeo.** La vía con recorrido de verdad son los
-peines: trabajan a 1/64 de la tasa de entrada, así que un solo juego de peines multiplexado
-podría dar servicio a decenas de canales, en lugar de replicarlos por canal como ahora.
+hace falta cambiar la arquitectura, no el mapeo.**
+
+### Peines compartidos: `comb_bank`
+
+Y ahí sí hay recorrido. Los peines trabajan a **1/64 de la tasa de entrada**: están parados el
+98 % del tiempo y aun así hay seis acumuladores de 36 bits replicados **por canal**. Medido,
+eso cuesta **216 LUT y 360 FF por canal**.
+
+[`rtl/comb_bank.v`](rtl/comb_bank.v) es un solo juego de peines que atiende 32 unidades por
+turnos —una unidad es una cadena I o Q, así que son 16 canales por banco—. Todos los canales
+diezman en el mismo ciclo, así que captura las 32 muestras de golpe y las procesa de una en
+una en los 32 ciclos siguientes, con margen de sobra antes del siguiente diezmado.
+
+| | LUT/canal | FF/canal | tile/canal | Techo LUT | Techo BRAM | **Muro** |
+|---|---|---|---|---|---|---|
+| Peines por canal (actual) | 703 | 821 | 1,0 | 166 | 144 | **144** |
+| **Peines compartidos** | **613** | 899 | **0,5** | 191 | 288 | **191** |
+| Sin peines (cota inalcanzable) | 486 | 461 | 0,5 | 241 | 288 | 241 |
+
+**144 → 191 canales, un +33 %**, y es la primera vez que algo mueve el techo de verdad.
+
+Hay un efecto secundario que no se buscaba: al bajar la presión de recursos **Vivado deja de
+replicar la ROM del NCO** y la BRAM cae sola a 0,5 tile por canal, sin forzar nada. Es lo que
+B5 intentaba conseguir a la fuerza y salía caro.
+
+El coste de `comb_bank` son 2034 LUT por banco, y el grueso **no** son los sumadores (4 restas
+de 36 bits, ~144 LUT) sino los **multiplexores 32:1** que leen el array de estado por índice.
+La vía para acercarse a la cota de 241 es poner ese estado en BRAM y pipelinear la ronda en
+tres etapas —leer, calcular, escribir—, que quita los multiplexores a cambio de 1-2 RAMB18 por
+banco. No está hecho.
+
+> **Estado:** `comb_bank` está verificado por equivalencia contra `cic_decim` —el RTL que ya
+> pasa los otros dos testbenches— con 368 comparaciones y 0 discrepancias, y el testbench está
+> validado por mutación. Lo que **falta** es integrarlo en `scanner_top`, que exige realinear
+> las salidas: con los peines compartidos cada canal sale en un ciclo distinto en vez de todos
+> a la vez. Los números de la tabla son la proyección medida de esa integración, no una
+> síntesis del banco ya integrado.
 
 Ojo con el Fmax: 220 MHz es **post-síntesis y optimista**. Falta rutar, y en modo OOC sin
 `HD.CLK_SRC` tampoco se modela el *skew* de reloj. El número bueno sale de la implementación
@@ -327,9 +363,9 @@ Ancho de banda por canal ≈ 780 kHz. Suficiente para FM de banda estrecha, PMR4
 - **Sin compensación de la caída del CIC.** Un CIC de 3 etapas atenúa hacia el borde de la banda
   (~3 dB en el 20 % superior). Para medir potencia no importa; para demodular hay que añadir un
   FIR compensador. No está.
-- **Los peines están replicados por canal.** Trabajan a 1/64 de la tasa de entrada, así que
-  están parados el 98 % del tiempo. Multiplexar un solo juego entre muchos canales es la
-  optimización con recorrido real, y la única que movería el techo de forma apreciable.
+- **Los peines siguen replicados por canal en `scanner_top`.** `comb_bank` ya resuelve esto y
+  está verificado, pero falta integrarlo: exige realinear las salidas, porque con los peines
+  compartidos cada canal sale en un ciclo distinto.
 
 - **Sin AXI4-Lite.** La interfaz de registros es síncrona y sencilla a propósito. Envolverla es
   un paso de Vivado.
