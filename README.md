@@ -42,7 +42,7 @@ solo Python, así que hay que ser exacto sobre el alcance de la verificación:
 | **Semántica del RTL** | ✅ **Verificado** | `model/rtl_check.py` — 39 muestras comparadas contra vectores dorados, **0 discrepancias** |
 | **Vectores de test del testbench** | ✅ **Generados y validados** | `model/gen_vectors.py` |
 | **Simulación de `ddc_channel`** | ✅ **Verificado** | XSim (Vivado 2026.1) — 40 salidas comparadas, **0 discrepancias** |
-| **Simulación de `scanner_top`** | ❌ **Sin comprobar** | No hay testbench del banco de N canales |
+| **Simulación de `scanner_top`** | ✅ **Verificado** | XSim — 4 canales, 160 muestras comparadas, **0 discrepancias**, 6 pruebas |
 | **Síntesis y recursos de `ddc_channel`** | ✅ **Medido** | Síntesis OOC, Vivado 2026.1 — 0 errores, 0 warnings críticos |
 | **Síntesis del banco completo, cierre de tiempos** | ❌ **Sin comprobar** | Falta el barrido de `N_CH` con implementación |
 | **Comportamiento en hardware** | ❌ **Sin comprobar** | Requiere la placa |
@@ -87,6 +87,7 @@ scanner64/
 ├── model/
 │   ├── ddc_model.py      Modelo bit-exacto. LA REFERENCIA del diseño. Autotest.
 │   ├── gen_vectors.py    Genera la LUT del NCO y los vectores dorados.
+│   ├── gen_vectors_bank.py  Vectores dorados del banco multicanal.
 │   └── rtl_check.py      Transcribe la semántica del RTL y la compara.
 ├── rtl/
 │   ├── nco.v             Acumulador de fase + LUT de coseno en BRAM.
@@ -96,8 +97,9 @@ scanner64/
 │   ├── sig_source.v      Generador de señal en la PL (la "antena" sin ADC).
 │   └── sin_lut.mem       Generado por gen_vectors.py.
 ├── tb/
-│   ├── tb_ddc_channel.v  Testbench autocomprobante: imprime PASA o FALLA.
-│   └── vectors/          Generados por gen_vectors.py.
+│   ├── tb_ddc_channel.v  Testbench del canal: aritmetica contra el modelo.
+│   ├── tb_scanner_top.v  Testbench del banco: 6 pruebas, imprime PASA o FALLA.
+│   └── vectors/          Generados por gen_vectors*.py.
 └── sw/
     └── bench_cpu.py      El mismo DSP en CPU, para medir el gap de verdad.
 ```
@@ -146,6 +148,33 @@ fuente de simulación, pon `tb/vectors/` en el *include path*, y copia `rtl/sin_
 directorio de trabajo del simulador.
 
 Debe imprimir `RESULTADO: PASA`.
+
+Y el del **banco de canales**, que prueba lo que el del canal no puede ver:
+
+```bash
+xvlog -sv -i vectors ../rtl/nco.v ../rtl/cic_decim.v ../rtl/ddc_channel.v                      ../rtl/scanner_top.v ../tb/tb_scanner_top.v
+xelab tb_scanner_top -s tb_bank
+xsim tb_bank -runall
+```
+
+Seis pruebas, con su propio contador de fallos cada una:
+
+| | Qué comprueba |
+|---|---|
+| **T1** | `cfg_we` escribe la sintonía en el canal indicado, y solo en ese |
+| **T2** | los N canales producen a la vez sin pisarse, cada uno con su sintonía |
+| **T3** | el mux de `tap_ch` devuelve el canal seleccionado |
+| **T4** | el medidor de potencia acumula, congela y reinicia; `rd_ch` lee bien |
+| **T5** | el escáner **discrimina**: los canales sobre un tono miden potencia alta y los sintonizados al vacío, baja |
+| **T6** | `cfg_clear` reinicia los acumuladores |
+
+El escenario sintoniza cuatro canales sobre un estímulo de dos tonos: dos canales sobre los
+tonos y dos sobre banda vacía, con **59 dB** de margen entre unos y otros.
+
+> El testbench se validó por mutación: introduciendo a propósito un mux de `tap_ch` que
+> ignora la selección y un `cfg_we` que escribe siempre en el canal 0, T1 da 4 fallos, T2
+> da 160, T3 da 3, T4 da 4 y T5 da 4. Un testbench que nunca has visto fallar no sabes si
+> comprueba algo.
 
 ### 3. Sintetizar y medir recursos
 
