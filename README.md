@@ -204,27 +204,53 @@ El experimento interesante es **subir `N_CH` hasta que deje de caber o de cerrar
 Primer dato medido, por síntesis *out-of-context* de **un** `ddc_channel` sobre
 `xck26-sfvc784-2LV-c` (Vivado 2026.1, `T = 10 ns`):
 
-| N_CH | DSP48E2 | CLB LUT | FF | BRAM tile | Fmax | Gop/s sostenidos |
-|---|---|---|---|---|---|---|
-| **1** | **3** | **600** | **677** | **1** | **220,6 MHz** | — |
-| 8 | | | | | | |
-| 16 | | | | | | |
-| 32 | | | | | | |
-| 64 | | | | | | |
-| 128 | | | | | | |
+Barrido medido, síntesis *out-of-context* de `scanner_top` sobre `xck26-sfvc784-2LV-c`
+(Vivado 2026.1, `T = 10 ns`), con `syn/sweep_bank.tcl`:
 
-**Y ese primer dato ya cambia el diseño.** El recurso crítico no son los multiplicadores:
+| N_CH | DSP48E2 | CLB LUT | FF | BRAM tile | RAMB18 | WNS | Fmax |
+|---|---|---|---|---|---|---|---|
+| 1 (solo `ddc_channel`) | 3 | 600 | 677 | 1 | 2 | 5,467 ns | 220,6 MHz |
+| **8** | 40 | 5 634 | 6 578 | 4 | 8 | 5,467 ns | 220,6 MHz |
+| **16** | 80 | 11 227 | 13 138 | 16 | 32 | 5,467 ns | 220,6 MHz |
+| **32** | 160 | 22 536 | 26 320 | 32 | 64 | 5,432 ns | 218,9 MHz |
 
-| Recurso | Disponible en el ZU5EV | Techo de canales |
-|---|---|---|
-| DSP48E2 | 1248 | 416 |
-| CLB LUT | 117 120 | 195 |
-| **BRAM tile** | **144** | **144** |
+Por canal el coste es **plano**: 5,00 DSP, ~703 LUT, ~822 FF. Y el Fmax **no se degrada** hasta
+32 canales, que era el riesgo real. Los 5 DSP son 3 del `ddc_channel` más 2 del medidor de
+potencia.
 
-El muro es la **BRAM**, porque cada `nco` infiere hoy su propia ROM de coseno y no se comparte
-entre canales. Hasta que eso se resuelva —LUT multipuerto compartida, o generar el seno con
-CORDIC y prescindir de la tabla— no tiene sentido intentar pasar de ~144 canales, y los DSP
-seguirán al 35 % de ocupación sin usar.
+### Dónde está el techo
+
+| Recurso | Disponible en el ZU5EV | Coste por canal | Techo |
+|---|---|---|---|
+| DSP48E2 | 1248 | 5,0 | 249 |
+| **CLB LUT** | **117 120** | **703** | **166** |
+| BRAM tile | 144 | 1,0 | 144 |
+
+**El muro está en ~144 canales por BRAM, pero el LUT viene justo detrás, en 166.** Esa cercanía
+es lo que decide qué merece la pena optimizar, y la respuesta es contraintuitiva.
+
+### Por qué compartir la LUT del NCO no sirve
+
+Parecía la optimización obvia: cada `nco` infiere su propia ROM de coseno, así que compartirla
+debería mover el techo. Se midió, y no.
+
+Vivado replica la tabla en 2 RAMB18 por canal a partir de `N_CH = 16` (con 8 canales sí infiere
+doble puerto real y usa 1). Forzándolo con `-max_bram` se consigue 0,5 tile por canal, pero el
+coste aparece en otro sitio:
+
+| | LUT/canal | tile/canal | Techo LUT | Techo BRAM | **Muro** |
+|---|---|---|---|---|---|
+| Automático | 703 | 1,0 | 166 | 144 | **144** |
+| Forzado a 1 RAMB18 | **916** | 0,5 | **127** | 288 | **127** |
+
+Ahorrar la BRAM cuesta **+214 LUT por canal**, y como el LUT es el segundo limitante el techo
+global **empeora**: 144 → 127. Aunque la BRAM saliera gratis, el techo solo subiría a 166: el
+retorno máximo de esta optimización es **+15 %**, y cualquier implementación que cueste más de
+unos 30 LUT por canal lo destruye.
+
+**La palanca no es la BRAM, es el LUT.** Son ~703 por canal, casi todo acumuladores del CIC, con
+los DSP al 58 % de su techo sin usar. Mover parte de la aritmética del CIC a los DSP48 que
+sobran es lo que movería el número de verdad.
 
 Ojo con el Fmax: 220 MHz es **post-síntesis y optimista**. Falta rutar, y en modo OOC sin
 `HD.CLK_SRC` tampoco se modela el *skew* de reloj. El número bueno sale de la implementación
@@ -265,8 +291,9 @@ Ancho de banda por canal ≈ 780 kHz. Suficiente para FM de banda estrecha, PMR4
   FIR compensador. No está.
 - **Sin AXI4-Lite.** La interfaz de registros es síncrona y sencilla a propósito. Envolverla es
   un paso de Vivado.
-- **La LUT no está compartida entre canales.** Cada `nco` infiere su propia BRAM. Con muchos
-  canales conviene compartir una LUT multipuerto o generar el seno con CORDIC.
+- **La LUT no está compartida entre canales.** Cada `nco` infiere su propia BRAM. Parece el
+  primer sitio donde optimizar, pero se midió y **no compensa**: ver "Por qué compartir la LUT
+  del NCO no sirve" más arriba. El recurso crítico es el LUT, no la BRAM.
 - **El ruido del `sig_source` es un LFSR**, no gaussiano. Sirve para suelo de ruido y rango
   dinámico, no para medir figura de ruido.
 
