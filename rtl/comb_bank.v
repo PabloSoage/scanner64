@@ -17,8 +17,8 @@
 // entrada y el contador. Asi que en el pulso de `start` se capturan de golpe
 // las N_UNIT muestras y luego se procesan de una en una, en los N_UNIT ciclos
 // siguientes. Como el diezmado se repite cada R ciclos, hace falta
-// N_UNIT < R para que la ronda termine antes de la siguiente: con R=64 el
-// valor seguro por defecto es 32 unidades, o sea 16 canales por banco.
+// N_UNIT + 1 < R para que la ronda termine antes de la siguiente: con R=64
+// el valor seguro por defecto es 32 unidades, o sea 16 canales por banco.
 //
 // El estado de cada unidad vive en un array indexado por turno. MEDIDO sobre
 // la KV260, N_UNIT=32: 2034 LUT y 7001 FF por banco, o sea 127 LUT y 438 FF
@@ -30,9 +30,27 @@
 // mismo presupuesto de LUT y el ahorro seria negativo. Dejarlo en flip-flops,
 // que sobran (234 k en el chip), es lo correcto aqui.
 //
-// La via para bajar de ahi es poner el estado en BRAM y pipelinear la ronda en
-// tres etapas (leer / calcular / escribir): quita los multiplexores enteros a
-// cambio de 1-2 RAMB18 por banco. No esta hecho.
+// LA RONDA VA EN DOS ETAPAS, y esto no es un capricho.
+//
+// La primera version hacia leer-calcular-escribir en un solo ciclo, y el
+// resultado fue un camino critico que iba del contador de turno hasta los DSP
+// del medidor de potencia, con el 84 % del retardo en CABLEADO: 5.148 ns de
+// rutado contra 0.951 ns de logica. Los multiplexores 32:1 obligan a la senal
+// a cruzar medio chip. Post-rutado el diseno se quedaba en 144 MHz.
+//
+// Partiendo la ronda en dos, la lectura del array queda aislada en su propia
+// etapa y el mux ya no comparte ciclo con la resta ni con lo que venga detras:
+//
+//     etapa A   lee el estado de la unidad u y lo registra
+//     etapa B   resta, escribe el estado nuevo y saca la muestra
+//
+// No hay riesgo de colision: en cualquier ciclo la etapa A lee la unidad u y
+// la B escribe la u-1, que son distintas. Cada unidad se toca una vez por
+// ronda. El coste es un ciclo mas de latencia y una ronda de N_UNIT+1 ciclos
+// en vez de N_UNIT, asi que ahora hace falta N_UNIT+1 < R.
+//
+// La siguiente via, si hiciera falta bajar el area, es poner el estado en BRAM
+// y pasar a tres etapas. No esta hecho.
 //
 // EQUIVALENCIA CON cic_decim
 //
@@ -50,7 +68,7 @@
 // despues del diezmado, no todas a la vez. Los valores son identicos bit a
 // bit; solo se reordenan en el tiempo.
 //
-// Requiere N >= 2 y N_UNIT < R.
+// Requiere N >= 2 y N_UNIT + 1 < R.
 // ---------------------------------------------------------------------------
 
 `default_nettype none
@@ -104,22 +122,34 @@ module comb_bank #(
         end
     end
 
-    // ---- Combinatoria de una ronda ----------------------------------------
+    // ---- Etapa A: lectura del estado de la unidad u -----------------------
     // prev[j] es el valor que la etapa j consume: la entrada para la primera,
     // y el valor PREVIO de la etapa anterior para el resto.
-    wire signed [ACC_W-1:0] d = buf_in[u];
-
-    wire signed [ACC_W-1:0] prev  [0:N-1];
-    wire signed [ACC_W-1:0] cv_nx [0:N-1];
+    // Estos son los multiplexores caros, y ahora tienen el ciclo para ellos.
+    wire signed [ACC_W-1:0] prev_c [0:N-1];
+    wire signed [ACC_W-1:0] cp_c   [0:N-1];
 
     genvar gj;
     generate
-        assign prev[0] = d;
+        assign prev_c[0] = buf_in[u];
         for (gj = 1; gj < N; gj = gj + 1) begin : gen_prev
-            assign prev[gj] = cv[gj-1][u];
+            assign prev_c[gj] = cv[gj-1][u];
         end
+        for (gj = 0; gj < N; gj = gj + 1) begin : gen_cp
+            assign cp_c[gj] = cp[gj][u];
+        end
+    endgenerate
+
+    reg                    a_valid;
+    reg [UW-1:0]           a_unit;
+    reg signed [ACC_W-1:0] a_prev [0:N-1];
+    reg signed [ACC_W-1:0] a_cp   [0:N-1];
+
+    // ---- Etapa B: la resta, con los operandos ya registrados --------------
+    wire signed [ACC_W-1:0] cv_nx [0:N-1];
+    generate
         for (gj = 0; gj < N; gj = gj + 1) begin : gen_cvnx
-            assign cv_nx[gj] = prev[gj] - cp[gj][u];
+            assign cv_nx[gj] = a_prev[gj] - a_cp[gj];
         end
     endgenerate
 
@@ -128,25 +158,28 @@ module comb_bank #(
         if (!rst_n) begin
             busy      <= 1'b0;
             u         <= {UW{1'b0}};
+            a_valid   <= 1'b0;
+            a_unit    <= {UW{1'b0}};
             out_valid <= 1'b0;
             out_unit  <= {UW{1'b0}};
             out_data  <= {ACC_W{1'b0}};
         end else begin
+            a_valid   <= 1'b0;
             out_valid <= 1'b0;
 
+            // --- Etapa A ---------------------------------------------------
             if (start) begin
                 for (k = 0; k < N_UNIT; k = k + 1)
                     buf_in[k] <= din_flat[k*ACC_W +: ACC_W];
                 busy <= 1'b1;
                 u    <= {UW{1'b0}};
             end else if (busy) begin
-                // Turno de la unidad u: actualiza su estado y saca su muestra.
-                for (j = 0; j < N-1; j = j + 1) cv[j][u] <= cv_nx[j];
-                for (j = 0; j < N;   j = j + 1) cp[j][u] <= prev[j];
-
-                out_data  <= cv_nx[N-1];
-                out_unit  <= u;
-                out_valid <= 1'b1;
+                a_valid <= 1'b1;
+                a_unit  <= u;
+                for (j = 0; j < N; j = j + 1) begin
+                    a_prev[j] <= prev_c[j];
+                    a_cp[j]   <= cp_c[j];
+                end
 
                 if (u == N_UNIT[UW-1:0] - 1'b1) begin
                     busy <= 1'b0;
@@ -154,6 +187,17 @@ module comb_bank #(
                 end else begin
                     u <= u + 1'b1;
                 end
+            end
+
+            // --- Etapa B ---------------------------------------------------
+            // Escribe la unidad a_unit, que es la anterior a la que lee A.
+            if (a_valid) begin
+                for (j = 0; j < N-1; j = j + 1) cv[j][a_unit] <= cv_nx[j];
+                for (j = 0; j < N;   j = j + 1) cp[j][a_unit] <= a_prev[j];
+
+                out_data  <= cv_nx[N-1];
+                out_unit  <= a_unit;
+                out_valid <= 1'b1;
             end
         end
     end
