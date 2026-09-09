@@ -1,7 +1,7 @@
 Copyright 1986-2022 Xilinx, Inc. All Rights Reserved. Copyright 2022-2026 Advanced Micro Devices, Inc. All Rights Reserved.
 --------------------------------------------------------------------------------------------------------------------------------------------------
 | Tool Version      : Vivado v.2026.1 (win64) Build 6511674 Tue Jun 16 11:02:23 MDT 2026
-| Date              : Wed Sep  9 22:47:51 2026
+| Date              : Wed Sep  9 23:08:07 2026
 | Host              : DESKTOP-LDKS4K4 running 64-bit major release  (build 9200)
 | Command           : report_timing_summary -file timing_impl_n16.rpt
 | Design            : scanner_top
@@ -139,7 +139,7 @@ Table of Contents
 
     WNS(ns)      TNS(ns)  TNS Failing Endpoints  TNS Total Endpoints      WHS(ns)      THS(ns)  THS Failing Endpoints  THS Total Endpoints     WPWS(ns)     TPWS(ns)  TPWS Failing Endpoints  TPWS Total Endpoints  
     -------      -------  ---------------------  -------------------      -------      -------  ---------------------  -------------------     --------     --------  ----------------------  --------------------  
-      3.512        0.000                      0                22864        0.012        0.000                      0                22864        4.238        0.000                       0                  9215  
+      4.115        0.000                      0                24526        0.015        0.000                      0                24526        4.238        0.000                       0                  9642  
 
 
 All user specified timing constraints are met.
@@ -162,7 +162,7 @@ clk    {0.000 5.000}      10.000          100.000
 
 Clock             WNS(ns)      TNS(ns)  TNS Failing Endpoints  TNS Total Endpoints      WHS(ns)      THS(ns)  THS Failing Endpoints  THS Total Endpoints     WPWS(ns)     TPWS(ns)  TPWS Failing Endpoints  TPWS Total Endpoints  
 -----             -------      -------  ---------------------  -------------------      -------      -------  ---------------------  -------------------     --------     --------  ----------------------  --------------------  
-clk                 3.512        0.000                      0                22864        0.012        0.000                      0                22864        4.238        0.000                       0                  9215  
+clk                 4.115        0.000                      0                24526        0.015        0.000                      0                24526        4.238        0.000                       0                  9642  
 
 
 ------------------------------------------------------------------------------------------------
@@ -193,28 +193,28 @@ Path Group    From Clock    To Clock          WNS(ns)      TNS(ns)  TNS Failing 
 From Clock:  clk
   To Clock:  clk
 
-Setup :            0  Failing Endpoints,  Worst Slack        3.512ns,  Total Violation        0.000ns
-Hold  :            0  Failing Endpoints,  Worst Slack        0.012ns,  Total Violation        0.000ns
+Setup :            0  Failing Endpoints,  Worst Slack        4.115ns,  Total Violation        0.000ns
+Hold  :            0  Failing Endpoints,  Worst Slack        0.015ns,  Total Violation        0.000ns
 PW    :            0  Failing Endpoints,  Worst Slack        4.238ns,  Total Violation        0.000ns
 ---------------------------------------------------------------------------------------------------
 
 
 Max Delay Paths
 --------------------------------------------------------------------------------------
-Slack (MET) :             3.512ns  (required time - arrival time)
-  Source:                 gen_front[0].u_front/x_d1_reg[0]/C
-                            (rising edge-triggered cell FDRE clocked by clk  {rise@0.000ns fall@5.000ns period=10.000ns})
-  Destination:            gen_front[9].u_front/mix_q_reg[0]/D
-                            (rising edge-triggered cell FDRE clocked by clk  {rise@0.000ns fall@5.000ns period=10.000ns})
+Slack (MET) :             4.115ns  (required time - arrival time)
+  Source:                 gen_front[4].u_front/u_nco/sin_o_reg/CLKBWRCLK
+                            (rising edge-triggered cell RAMB18E2 clocked by clk  {rise@0.000ns fall@5.000ns period=10.000ns})
+  Destination:            gen_front[3].u_front/prod_q_r_reg/DSP_OUTPUT_INST/ALU_OUT[0]
+                            (rising edge-triggered cell DSP_OUTPUT clocked by clk  {rise@0.000ns fall@5.000ns period=10.000ns})
   Path Group:             clk
   Path Type:              Setup (Max at Slow Process Corner)
   Requirement:            10.000ns  (clk rise@10.000ns - clk rise@0.000ns)
-  Data Path Delay:        6.251ns  (logic 2.126ns (34.010%)  route 4.125ns (65.990%))
-  Logic Levels:           6  (DSP_A_B_DATA=1 DSP_ALU=1 DSP_M_DATA=1 DSP_MULTIPLIER=1 DSP_OUTPUT=1 DSP_PREADD_DATA=1)
-  Clock Path Skew:        -0.246ns (DCD - SCD + CPR)
-    Destination Clock Delay (DCD):    1.289ns = ( 11.289 - 10.000 ) 
-    Source Clock Delay      (SCD):    1.556ns
-    Clock Pessimism Removal (CPR):    0.021ns
+  Data Path Delay:        5.476ns  (logic 4.168ns (76.121%)  route 1.308ns (23.879%))
+  Logic Levels:           7  (DSP_A_B_DATA=1 DSP_ALU=2 DSP_M_DATA=1 DSP_MULTIPLIER=1 DSP_OUTPUT=1 DSP_PREADD_DATA=1)
+  Clock Path Skew:        -0.389ns (DCD - SCD + CPR)
+    Destination Clock Delay (DCD):    1.977ns = ( 11.977 - 10.000 ) 
+    Source Clock Delay      (SCD):    2.501ns
+    Clock Pessimism Removal (CPR):    0.135ns
   Clock Uncertainty:      0.035ns  ((TSJ^2 + TIJ^2)^1/2 + DJ) / 2 + PE
     Total System Jitter     (TSJ):    0.071ns
     Total Input Jitter      (TIJ):    0.000ns
@@ -225,46 +225,49 @@ Slack (MET) :             3.512ns  (required time - arrival time)
   -------------------------------------------------------------------    -------------------
                          (clock clk rise edge)        0.000     0.000 r  <hidden>
                                                       0.000     0.000 r  clk
-                         net (fo=9550, unset)         1.556     1.556    gen_front[0].u_front/clk
-    SLICE_X29Y65         FDRE                                         r  gen_front[0].u_front/x_d1_reg[0]/C
+                         net (fo=9977, unset)         2.501     2.501    gen_front[4].u_front/u_nco/clk
+    RAMB18_X1Y28         RAMB18E2                                     r  gen_front[4].u_front/u_nco/sin_o_reg/CLKBWRCLK
   -------------------------------------------------------------------    -------------------
-    SLICE_X29Y65         FDRE (Prop_HFF_SLICEM_C_Q)
-                                                      0.114     1.670 f  gen_front[0].u_front/x_d1_reg[0]/Q
-                         net (fo=22, routed)          2.979     4.649    gen_front[9].u_front/prod_q/A[0]
-    DSP48E2_X5Y4         DSP_A_B_DATA (Prop_DSP_A_B_DATA_DSP48E2_A[0]_A2_DATA[0])
-                                                      0.258     4.907 r  gen_front[9].u_front/prod_q/DSP_A_B_DATA_INST/A2_DATA[0]
-                         net (fo=1, routed)           0.000     4.907    gen_front[9].u_front/prod_q/DSP_A_B_DATA.A2_DATA<0>
-    DSP48E2_X5Y4         DSP_PREADD_DATA (Prop_DSP_PREADD_DATA_DSP48E2_A2_DATA[0]_A2A1[0])
-                                                      0.114     5.021 r  gen_front[9].u_front/prod_q/DSP_PREADD_DATA_INST/A2A1[0]
-                         net (fo=1, routed)           0.000     5.021    gen_front[9].u_front/prod_q/DSP_PREADD_DATA.A2A1<0>
-    DSP48E2_X5Y4         DSP_MULTIPLIER (Prop_DSP_MULTIPLIER_DSP48E2_A2A1[0]_U[15])
-                                                      0.700     5.721 f  gen_front[9].u_front/prod_q/DSP_MULTIPLIER_INST/U[15]
-                         net (fo=1, routed)           0.000     5.721    gen_front[9].u_front/prod_q/DSP_MULTIPLIER.U<15>
-    DSP48E2_X5Y4         DSP_M_DATA (Prop_DSP_M_DATA_DSP48E2_U[15]_U_DATA[15])
-                                                      0.067     5.788 r  gen_front[9].u_front/prod_q/DSP_M_DATA_INST/U_DATA[15]
-                         net (fo=1, routed)           0.000     5.788    gen_front[9].u_front/prod_q/DSP_M_DATA.U_DATA<15>
-    DSP48E2_X5Y4         DSP_ALU (Prop_DSP_ALU_DSP48E2_U_DATA[15]_ALU_OUT[15])
-                                                      0.727     6.515 f  gen_front[9].u_front/prod_q/DSP_ALU_INST/ALU_OUT[15]
-                         net (fo=1, routed)           0.000     6.515    gen_front[9].u_front/prod_q/DSP_ALU.ALU_OUT<15>
-    DSP48E2_X5Y4         DSP_OUTPUT (Prop_DSP_OUTPUT_DSP48E2_ALU_OUT[15]_P[15])
-                                                      0.146     6.661 r  gen_front[9].u_front/prod_q/DSP_OUTPUT_INST/P[15]
-                         net (fo=1, routed)           1.146     7.807    gen_front[9].u_front/prod_q__1[15]
-    SLICE_X26Y13         FDRE                                         r  gen_front[9].u_front/mix_q_reg[0]/D
+    RAMB18_X1Y28         RAMB18E2 (Prop_RAMB18E2_L_RAMB180_CLKBWRCLK_DOUTBDOUT[0])
+                                                      1.382     3.883 f  gen_front[4].u_front/u_nco/sin_o_reg/DOUTBDOUT[0]
+                         net (fo=2, routed)           1.270     5.152    gen_front[3].u_front/prod_q/B[0]
+    DSP48E2_X10Y27       DSP_A_B_DATA (Prop_DSP_A_B_DATA_DSP48E2_B[0]_B2_DATA[0])
+                                                      0.216     5.368 r  gen_front[3].u_front/prod_q/DSP_A_B_DATA_INST/B2_DATA[0]
+                         net (fo=1, routed)           0.000     5.368    gen_front[3].u_front/prod_q/DSP_A_B_DATA.B2_DATA<0>
+    DSP48E2_X10Y27       DSP_PREADD_DATA (Prop_DSP_PREADD_DATA_DSP48E2_B2_DATA[0]_B2B1[0])
+                                                      0.097     5.465 r  gen_front[3].u_front/prod_q/DSP_PREADD_DATA_INST/B2B1[0]
+                         net (fo=1, routed)           0.000     5.465    gen_front[3].u_front/prod_q/DSP_PREADD_DATA.B2B1<0>
+    DSP48E2_X10Y27       DSP_MULTIPLIER (Prop_DSP_MULTIPLIER_DSP48E2_B2B1[0]_U[31])
+                                                      0.773     6.238 f  gen_front[3].u_front/prod_q/DSP_MULTIPLIER_INST/U[31]
+                         net (fo=1, routed)           0.000     6.238    gen_front[3].u_front/prod_q/DSP_MULTIPLIER.U<31>
+    DSP48E2_X10Y27       DSP_M_DATA (Prop_DSP_M_DATA_DSP48E2_U[31]_U_DATA[31])
+                                                      0.067     6.305 r  gen_front[3].u_front/prod_q/DSP_M_DATA_INST/U_DATA[31]
+                         net (fo=1, routed)           0.000     6.305    gen_front[3].u_front/prod_q/DSP_M_DATA.U_DATA<31>
+    DSP48E2_X10Y27       DSP_ALU (Prop_DSP_ALU_DSP48E2_U_DATA[31]_ALU_OUT[47])
+                                                      0.727     7.032 f  gen_front[3].u_front/prod_q/DSP_ALU_INST/ALU_OUT[47]
+                         net (fo=1, routed)           0.000     7.032    gen_front[3].u_front/prod_q/DSP_ALU.ALU_OUT<47>
+    DSP48E2_X10Y27       DSP_OUTPUT (Prop_DSP_OUTPUT_DSP48E2_ALU_OUT[47]_PCOUT[47])
+                                                      0.167     7.199 r  gen_front[3].u_front/prod_q/DSP_OUTPUT_INST/PCOUT[47]
+                         net (fo=1, routed)           0.038     7.237    gen_front[3].u_front/prod_q_r_reg/PCIN[47]
+    DSP48E2_X10Y28       DSP_ALU (Prop_DSP_ALU_DSP48E2_PCIN[47]_ALU_OUT[0])
+                                                      0.739     7.976 r  gen_front[3].u_front/prod_q_r_reg/DSP_ALU_INST/ALU_OUT[0]
+                         net (fo=1, routed)           0.000     7.976    gen_front[3].u_front/prod_q_r_reg/DSP_ALU.ALU_OUT<0>
+    DSP48E2_X10Y28       DSP_OUTPUT                                   r  gen_front[3].u_front/prod_q_r_reg/DSP_OUTPUT_INST/ALU_OUT[0]
   -------------------------------------------------------------------    -------------------
 
                          (clock clk rise edge)       10.000    10.000 r  <hidden>
                                                       0.000    10.000 r  clk
-                         net (fo=9550, unset)         1.289    11.289    gen_front[9].u_front/clk
-    SLICE_X26Y13         FDRE                                         r  gen_front[9].u_front/mix_q_reg[0]/C
-                         clock pessimism              0.021    11.310    <hidden>
-                         clock uncertainty           -0.035    11.275    <hidden>
-    SLICE_X26Y13         FDRE (Setup_EFF_SLICEL_C_D)
-                                                      0.044    11.319    gen_front[9].u_front/mix_q_reg[0]
+                         net (fo=9977, unset)         1.977    11.977    gen_front[3].u_front/prod_q_r_reg/CLK
+    DSP48E2_X10Y28       DSP_OUTPUT                                   r  gen_front[3].u_front/prod_q_r_reg/DSP_OUTPUT_INST/CLK
+                         clock pessimism              0.135    12.112    <hidden>
+                         clock uncertainty           -0.035    12.077    <hidden>
+    DSP48E2_X10Y28       DSP_OUTPUT (Setup_DSP_OUTPUT_DSP48E2_CLK_ALU_OUT[0])
+                                                      0.014    12.091    gen_front[3].u_front/prod_q_r_reg/DSP_OUTPUT_INST
   -------------------------------------------------------------------
-                         required time                         11.319    <hidden>
-                         arrival time                          -7.807    <hidden>
+                         required time                         12.091    <hidden>
+                         arrival time                          -7.976    <hidden>
   -------------------------------------------------------------------
-                         slack                                  3.512    <hidden>
+                         slack                                  4.115    <hidden>
 
 
 
@@ -272,55 +275,46 @@ Slack (MET) :             3.512ns  (required time - arrival time)
 
 Min Delay Paths
 --------------------------------------------------------------------------------------
-Slack (MET) :             0.012ns  (arrival time - required time)
-  Source:                 gen_front[0].u_front/u_int_i/integ_reg[2][31]/C
+Slack (MET) :             0.015ns  (arrival time - required time)
+  Source:                 gen_bank[0].u_comb/a_prev_reg[1][3]/C
                             (rising edge-triggered cell FDRE clocked by clk  {rise@0.000ns fall@5.000ns period=10.000ns})
-  Destination:            gen_front[0].u_front/u_int_i/integ_reg[2][32]/D
-                            (rising edge-triggered cell FDRE clocked by clk  {rise@0.000ns fall@5.000ns period=10.000ns})
+  Destination:            gen_bank[0].u_comb/cp_reg[1][0]_0_31_0_13/RAMB_D1/I
+                            (rising edge-triggered cell RAMD32 clocked by clk  {rise@0.000ns fall@5.000ns period=10.000ns})
   Path Group:             clk
   Path Type:              Hold (Min at Slow Process Corner)
   Requirement:            0.000ns  (clk rise@0.000ns - clk rise@0.000ns)
-  Data Path Delay:        0.338ns  (logic 0.257ns (75.967%)  route 0.081ns (24.033%))
-  Logic Levels:           3  (CARRY8=2 LUT2=1)
-  Clock Path Skew:        0.226ns (DCD - SCD - CPR)
-    Destination Clock Delay (DCD):    1.565ns
-    Source Clock Delay      (SCD):    1.318ns
-    Clock Pessimism Removal (CPR):    0.021ns
+  Data Path Delay:        0.212ns  (logic 0.111ns (52.277%)  route 0.101ns (47.723%))
+  Logic Levels:           0  
+  Clock Path Skew:        0.116ns (DCD - SCD - CPR)
+    Destination Clock Delay (DCD):    2.242ns
+    Source Clock Delay      (SCD):    1.952ns
+    Clock Pessimism Removal (CPR):    0.173ns
 
     Location             Delay type                Incr(ns)  Path(ns)    Netlist Resource(s)
   -------------------------------------------------------------------    -------------------
                          (clock clk rise edge)        0.000     0.000 r  <hidden>
                                                       0.000     0.000 r  clk
-                         net (fo=9550, unset)         1.318     1.318    gen_front[0].u_front/u_int_i/clk
-    SLICE_X34Y59         FDRE                                         r  gen_front[0].u_front/u_int_i/integ_reg[2][31]/C
+                         net (fo=9977, unset)         1.952     1.952    gen_bank[0].u_comb/clk
+    SLICE_X38Y80         FDRE                                         r  gen_bank[0].u_comb/a_prev_reg[1][3]/C
   -------------------------------------------------------------------    -------------------
-    SLICE_X34Y59         FDRE (Prop_HFF_SLICEM_C_Q)
-                                                      0.112     1.430 r  gen_front[0].u_front/u_int_i/integ_reg[2][31]/Q
-                         net (fo=3, routed)           0.047     1.477    gen_front[0].u_front/u_int_i/integ_reg[2]_2[31]
-    SLICE_X34Y59         LUT2 (Prop_H6LUT_SLICEM_I1_O)
-                                                      0.035     1.512 r  gen_front[0].u_front/u_int_i/integ[2][24]_i_2/O
-                         net (fo=1, routed)           0.018     1.530    gen_front[0].u_front/u_int_i/integ[2][24]_i_2_n_0
-    SLICE_X34Y59         CARRY8 (Prop_CARRY8_SLICEM_S[7]_CO[7])
-                                                      0.066     1.596 r  gen_front[0].u_front/u_int_i/integ_reg[2][24]_i_1/CO[7]
-                         net (fo=1, routed)           0.005     1.601    gen_front[0].u_front/u_int_i/integ_reg[2][24]_i_1_n_0
-    SLICE_X34Y60         CARRY8 (Prop_CARRY8_SLICEM_CI_O[0])
-                                                      0.044     1.645 r  gen_front[0].u_front/u_int_i/integ_reg[2][32]_i_1/O[0]
-                         net (fo=1, routed)           0.011     1.656    gen_front[0].u_front/u_int_i/integ_reg[2][32]_i_1_n_15
-    SLICE_X34Y60         FDRE                                         r  gen_front[0].u_front/u_int_i/integ_reg[2][32]/D
+    SLICE_X38Y80         FDRE (Prop_BFF_SLICEM_C_Q)
+                                                      0.111     2.063 r  gen_bank[0].u_comb/a_prev_reg[1][3]/Q
+                         net (fo=3, routed)           0.101     2.164    gen_bank[0].u_comb/cp_reg[1][0]_0_31_0_13/DIB1
+    SLICE_X38Y81         RAMD32                                       r  gen_bank[0].u_comb/cp_reg[1][0]_0_31_0_13/RAMB_D1/I
   -------------------------------------------------------------------    -------------------
 
                          (clock clk rise edge)        0.000     0.000 r  <hidden>
                                                       0.000     0.000 r  clk
-                         net (fo=9550, unset)         1.565     1.565    gen_front[0].u_front/u_int_i/clk
-    SLICE_X34Y60         FDRE                                         r  gen_front[0].u_front/u_int_i/integ_reg[2][32]/C
-                         clock pessimism             -0.021     1.544    <hidden>
-    SLICE_X34Y60         FDRE (Hold_AFF_SLICEM_C_D)
-                                                      0.101     1.645    gen_front[0].u_front/u_int_i/integ_reg[2][32]
+                         net (fo=9977, unset)         2.242     2.242    gen_bank[0].u_comb/cp_reg[1][0]_0_31_0_13/WCLK
+    SLICE_X38Y81         RAMD32                                       r  gen_bank[0].u_comb/cp_reg[1][0]_0_31_0_13/RAMB_D1/CLK
+                         clock pessimism             -0.173     2.068    <hidden>
+    SLICE_X38Y81         RAMD32 (Hold_B6LUT_SLICEM_CLK_I)
+                                                      0.081     2.149    gen_bank[0].u_comb/cp_reg[1][0]_0_31_0_13/RAMB_D1
   -------------------------------------------------------------------
-                         required time                         -1.645    <hidden>
-                         arrival time                           1.656    <hidden>
+                         required time                         -2.149    <hidden>
+                         arrival time                           2.164    <hidden>
   -------------------------------------------------------------------
-                         slack                                  0.012    <hidden>
+                         slack                                  0.015    <hidden>
 
 
 
@@ -334,9 +328,9 @@ Period(ns):         10.000
 Sources:            { clk }
 
 Check Type        Corner  Lib Pin             Reference Pin  Required(ns)  Actual(ns)  Slack(ns)  Location      Pin
-Min Period        n/a     RAMB18E2/CLKARDCLK  n/a            1.709         10.000      8.291      RAMB18_X0Y22  prod_i_i_1/CLKARDCLK
-Low Pulse Width   Slow    RAMD32/CLK          n/a            0.762         5.000       4.238      SLICE_X31Y47  gen_bank[0].u_comb/cp_reg[0][0]_0_31_0_13/RAMA/CLK
-High Pulse Width  Slow    RAMD32/CLK          n/a            0.762         5.000       4.238      SLICE_X31Y47  gen_bank[0].u_comb/cp_reg[0][0]_0_31_0_13/RAMA/CLK
+Min Period        n/a     RAMB18E2/CLKARDCLK  n/a            1.709         10.000      8.291      RAMB18_X0Y22  prod_i_r_reg_i_1/CLKARDCLK
+Low Pulse Width   Slow    RAMD32/CLK          n/a            0.762         5.000       4.238      SLICE_X38Y79  gen_bank[0].u_comb/cp_reg[0][0]_0_31_0_13/RAMA/CLK
+High Pulse Width  Slow    RAMD32/CLK          n/a            0.762         5.000       4.238      SLICE_X38Y79  gen_bank[0].u_comb/cp_reg[0][0]_0_31_0_13/RAMA/CLK
 
 
 

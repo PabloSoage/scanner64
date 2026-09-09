@@ -375,33 +375,42 @@ escribir—. Tampoco está hecho.
 > `tb_comb_bank` y `tb_scanner_top`—, solo se reordenan en el tiempo. Si necesitas una foto
 > simultánea de todos los canales, espera a que la ronda termine: dura `UNITS_PER_BANK` ciclos.
 
-### El Fmax de verdad: 144 MHz
+### El Fmax de verdad: 170 MHz
 
-Los 220 MHz de las tablas de arriba son **post-síntesis**. La implementación completa
-—`syn/impl_bank.tcl`, con place & route y el `HD.CLK_SRC` puesto para que modele el *skew*—
-da el número real:
+Los 220 MHz de las tablas de arriba son **post-síntesis** y no significan gran cosa. La
+implementación completa —`syn/impl_bank.tcl`, con place & route y `HD.CLK_SRC` puesto para que
+modele el *skew*— da el número real. Y perseguirlo fue un ejercicio instructivo:
 
-| N_CH = 16 | WNS | Fmax |
+| N_CH = 16 | Fmax | Camino crítico |
 |---|---|---|
-| Post-síntesis | 5,467 ns | 220,6 MHz |
-| **Post-rutado** | **3,067 ns** | **144,2 MHz** |
+| Post-síntesis | 220,6 MHz | *(no rutado: optimista)* |
+| Primera implementación | **144,2 MHz** | Mux 32:1 del banco de peines · **84 % rutado** |
+| + `comb_bank` en dos etapas | **154,1 MHz** | Mezclador, con fanout 16 · 66 % rutado |
+| + `max_fanout` en `x_d1` | **167,9 MHz** | Mezclador · 60 % lógica |
+| + mezclador en dos etapas | **169,9 MHz** | **BRAM + DSP · 76 % lógica pura** |
 
-El rutado se lleva el 35 %, y el informe dice dónde:
+**+18 %, y ahí se acaba lo que se puede hacer desde el RTL.** El camino final no tiene ni una
+LUT: es el retardo de salida de la BRAM del NCO más la cadena interna del DSP48 (pre-adder →
+multiplicador → ALU → salida), con solo 1,3 ns de rutado. Es el suelo del silicio.
 
-```
-Source:      gen_bank[0].u_comb/u_reg[1]_rep__4   (contador de turno del banco de peines)
-Destination: gen_pwr[13].mag2/DSP_A_B_DATA_INST   (multiplicador del medidor del canal 13)
-Data Path Delay: 6.099ns  (logic 0.951ns = 16%   route 5.148ns = 84%)
-Logic Levels: 6
-```
+Las tres lecciones del ejercicio, por si sirven en otro diseño:
 
-**El 84 % del retardo es cableado, no lógica.** El multiplexado de `comb_bank` creó un camino
-que cruza el die: del contador de turno, por los multiplexores 32:1, hasta el DSP del medidor
-de un canal que quedó lejos. Se arregla con **una etapa de registro entre el realineado y el
-medidor de potencia** — un ciclo más de latencia, que ahí es gratis porque los datos ya van a
-1,5 MSPS. No está hecho.
+1. **Un camino con 84 % de rutado no se arregla optimizando lógica.** Se arregla partiéndolo o
+   quitándole fanout.
+2. **Vivado fusiona registros idénticos.** Los 16 canales registraban el mismo `in_data`, así
+   que dedujo que los `x_d1` eran el mismo y dejó una señal con fanout 16 cruzando el chip.
+   `max_fanout` le obliga a replicar, y cada copia se coloca junto a su DSP: **+14 MHz por un
+   atributo de una línea.**
+3. **Cuando el porcentaje de lógica sube, vas por buen camino.** Pasar de 16 % a 76 % de lógica
+   significa que el rutado ya no manda y que lo que queda es estructural.
 
-Con 144 MHz, 100 MSPS entra con margen. Lo que no entra es nada por encima.
+> **El *speed grade* es parte del techo.** La KV260 lleva una **XCK26-SFVC784-2LV-C**, y ese
+> `2LV` es *low voltage*: el chip corre a 0,72 V en vez de 0,85 V para consumir menos. Un `-2`
+> normal daría entre un 15 y un 20 % más con este mismo RTL. Parte de los 170 MHz son el
+> silicio, no el diseño — y para una plataforma alimentada de una batería, ese cambio es el
+> correcto.
+
+Con 170 MHz, 100 MSPS entra con holgura. 200 MSPS no.
 
 ---
 
