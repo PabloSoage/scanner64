@@ -375,9 +375,33 @@ escribir—. Tampoco está hecho.
 > `tb_comb_bank` y `tb_scanner_top`—, solo se reordenan en el tiempo. Si necesitas una foto
 > simultánea de todos los canales, espera a que la ronda termine: dura `UNITS_PER_BANK` ciclos.
 
-Ojo con el Fmax: 220 MHz es **post-síntesis y optimista**. Falta rutar, y en modo OOC sin
-`HD.CLK_SRC` tampoco se modela el *skew* de reloj. El número bueno sale de la implementación
-completa.
+### El Fmax de verdad: 144 MHz
+
+Los 220 MHz de las tablas de arriba son **post-síntesis**. La implementación completa
+—`syn/impl_bank.tcl`, con place & route y el `HD.CLK_SRC` puesto para que modele el *skew*—
+da el número real:
+
+| N_CH = 16 | WNS | Fmax |
+|---|---|---|
+| Post-síntesis | 5,467 ns | 220,6 MHz |
+| **Post-rutado** | **3,067 ns** | **144,2 MHz** |
+
+El rutado se lleva el 35 %, y el informe dice dónde:
+
+```
+Source:      gen_bank[0].u_comb/u_reg[1]_rep__4   (contador de turno del banco de peines)
+Destination: gen_pwr[13].mag2/DSP_A_B_DATA_INST   (multiplicador del medidor del canal 13)
+Data Path Delay: 6.099ns  (logic 0.951ns = 16%   route 5.148ns = 84%)
+Logic Levels: 6
+```
+
+**El 84 % del retardo es cableado, no lógica.** El multiplexado de `comb_bank` creó un camino
+que cruza el die: del contador de turno, por los multiplexores 32:1, hasta el DSP del medidor
+de un canal que quedó lejos. Se arregla con **una etapa de registro entre el realineado y el
+medidor de potencia** — un ciclo más de latencia, que ahí es gratis porque los datos ya van a
+1,5 MSPS. No está hecho.
+
+Con 144 MHz, 100 MSPS entra con margen. Lo que no entra es nada por encima.
 
 ---
 
