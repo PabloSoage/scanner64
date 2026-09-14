@@ -133,6 +133,273 @@ static int check_id(void)
     return 0;
 }
 
+/* Vuelca los 32 registros en crudo. Para cuando algo no cuadra y hay que ver
+ * el patron entero en vez de adivinar. */
+static void cmd_raw(void)
+{
+    static const char *nm[19] = {
+        "ID","CTRL","SRC_FTWA","SRC_FTWB","SRC_SH","CFG_CH","CFG_FTW",
+        "PWR_LEN","RD_CH","PWR_LO","PWR_HI","READY","SMP_LO","SMP_HI",
+        "OUT_CNT","NCH","TAP_I","TAP_Q","TAP_CNT" };
+    printf("\n  off   idx  nombre       valor\n");
+    for (int i = 0; i < 20; i++) {
+        uint32_t v = rd(i * 4);
+        printf("  0x%02X   %2d  %-11s 0x%08X  %u\n",
+               i * 4, i, i < 19 ? nm[i] : "-", v, v);
+    }
+    /* Lecturas repetidas del mismo registro: si cambian, el problema es de
+     * handshake y no de decodificado de direccion. */
+    printf("\n  ID  leido 4 veces: ");
+    for (int i = 0; i < 4; i++) printf("0x%08X ", rd(R_ID));
+    printf("\n  NCH leido 4 veces: ");
+    for (int i = 0; i < 4; i++) printf("0x%08X ", rd(R_NCH));
+    printf("\n\n");
+}
+
+/* Escribe y vuelve a leer, para separar tres cosas que desde fuera parecen
+ * la misma: si las escrituras llegan, si las lecturas devuelven, y si el
+ * escaner procesa. Cada paso descarta una hipotesis. */
+static void cmd_probe(void)
+{
+    printf("\n1) escribir y releer un registro RW\n");
+    wr(R_SRC_FTWA, 0xDEADBEEFu);
+    uint32_t a = rd(R_SRC_FTWA);
+    printf("   SRC_FTWA <- 0xDEADBEEF, leido 0x%08X   %s\n",
+           a, a == 0xDEADBEEFu ? "ESCRITURA Y LECTURA OK" : "NO CUADRA");
+
+    wr(R_PWR_LEN, 1234);
+    uint32_t b = rd(R_PWR_LEN);
+    printf("   PWR_LEN  <- 1234,       leido %u          %s\n",
+           b, b == 1234 ? "OK" : "NO CUADRA");
+
+    printf("\n2) constante de solo lectura\n");
+    printf("   NCH  = %u   (deberia ser 16)\n", rd(R_NCH));
+    printf("   ID   = 0x%08X\n", rd(R_ID));
+
+    printf("\n3) arrancar el escaner y ver si el contador avanza\n");
+    wr(R_CTRL, CTRL_RUN);
+    uint32_t c1 = rd(R_CTRL);
+    printf("   CTRL <- 0x1 (run), leido 0x%08X\n", c1);
+    wr(R_CTRL, CTRL_RUN | CTRL_SRC_EN);
+    uint32_t c2 = rd(R_CTRL);
+    printf("   CTRL <- 0x3 (run+src), leido 0x%08X\n", c2);
+
+    uint32_t s0 = rd(R_SMP_LO);
+    usleep(200000);
+    uint32_t s1 = rd(R_SMP_LO);
+    printf("   SMP_LO: %u -> %u   (delta %u en 0.2 s)\n", s0, s1, s1 - s0);
+    if (s1 != s0) {
+        printf("   -> EL ESCANER PROCESA. La PL funciona.\n");
+        printf("      tasa observada: %.2f MSPS\n", (s1 - s0) / 0.2 / 1e6);
+    } else {
+        printf("   -> el contador no avanza: o no arranca el generador o las\n");
+        printf("      escrituras a CTRL no llegan.\n");
+    }
+    printf("   OUT_CNT = %u\n", rd(R_OUT_CNT));
+    wr(R_CTRL, CTRL_RUN);
+    printf("\n");
+}
+
+/* Mapa completo del decodificador. Cuando SOLO algunos registros leen bien no
+ * sirve de nada seguir deduciendo: hay que separar dos causas que desde fuera
+ * producen exactamente el mismo sintoma.
+ *
+ *   DIRECCION : el decodificador no responde a ese offset y cae en el default.
+ *   SECUENCIA : el handshake devuelve el dato de la lectura ANTERIOR, asi que
+ *               el valor depende de en que orden se lea, no de donde.
+ *
+ * Lo que sabemos hasta ahora es que leen bien 0x00 (ID), 0x10 (SRC_SH) y 0x30
+ * (SMP_LO) --los tres multiplos de 16-- y que el resto devuelve cero. Leer las
+ * mismas 64 palabras hacia delante, hacia atras y dos veces seguidas decide
+ * entre las dos causas en una sola pasada. */
+static void cmd_map(void)
+{
+    uint32_t asc[64], desc[64], twice[64];
+    int i, off, n;
+    size_t k;
+
+    for (i = 0; i < 64; i++) asc[i] = rd(i * 4);
+    for (i = 63; i >= 0; i--) desc[i] = rd(i * 4);
+    for (i = 0; i < 64; i++) { (void)rd(i * 4); twice[i] = rd(i * 4); }
+
+    printf("\n1) las mismas 64 palabras, leidas de tres maneras\n");
+    printf("   idx  off    ascendente   descendente  leida 2 veces\n");
+    for (i = 0; i < 64; i++) {
+        if (!asc[i] && !desc[i] && !twice[i]) continue;
+        printf("   %3d  0x%02X   0x%08X   0x%08X   0x%08X%s\n",
+               i, i * 4, asc[i], desc[i], twice[i],
+               (asc[i] == desc[i] && asc[i] == twice[i]) ? "" : "   <-- CAMBIA");
+    }
+    printf("   (solo salen las que no son cero en alguna pasada)\n");
+    printf("   iguales las tres pasadas -> es la DIRECCION\n");
+    printf("   alguna CAMBIA            -> es la SECUENCIA (handshake)\n");
+
+    /* Si el decodificador estuviera desplazado, los valores seguirian ahi
+     * pero en otro offset. Buscarlos por todo el mapeo lo dice sin ambiguedad:
+     * si el valor de reset de SRC_FTWA no aparece en ningun sitio, entonces el
+     * registro vale cero de verdad y no es un problema de lectura. */
+    printf("\n2) donde aparece cada valor conocido en los 4 KB mapeados\n");
+    {
+        struct { uint32_t v; const char *q; } look[] = {
+            { MAGIC,       "ID 0x5CA44E64"           },
+            { 0x1999999Au, "reset de SRC_FTWA"       },
+            { 0x26666666u, "reset de SRC_FTWB"       },
+            { 0x00000022u, "reset de SRC_SH"         },
+            { 0x00000400u, "reset de PWR_LEN (1024)" },
+            { 0x00000010u, "N_CH = 16"               },
+        };
+        for (k = 0; k < sizeof look / sizeof look[0]; k++) {
+            printf("   %-24s :", look[k].q);
+            n = 0;
+            for (off = 0; off < 4096; off += 4)
+                if (rd(off) == look[k].v && n < 12) { printf(" 0x%03X", off); n++; }
+            printf("%s\n", n ? "" : "  NO APARECE EN NINGUN SITIO");
+        }
+    }
+
+    /* Y lo mismo por el lado de la escritura: una firma distinta en cada
+     * registro RW y luego mirar donde ha caido cada una. */
+    printf("\n3) una firma distinta en cada registro RW, y volcado\n");
+    {
+        static const int rw[] = { 0x08, 0x0C, 0x10, 0x14, 0x18, 0x1C, 0x20 };
+        int nrw = (int)(sizeof rw / sizeof rw[0]);
+        for (i = 0; i < nrw; i++)
+            wr(rw[i], 0xC0DE0000u | ((uint32_t)rw[i] << 4) | 0xAu);
+        printf("   escritas:");
+        for (i = 0; i < nrw; i++)
+            printf(" 0x%02X<-0x%08X", rw[i], 0xC0DE0000u | ((uint32_t)rw[i] << 4) | 0xAu);
+        printf("\n   leidas (solo las no nulas):\n");
+        for (off = 0; off < 128; off += 4) {
+            uint32_t v = rd(off);
+            if (v) printf("     0x%02X = 0x%08X\n", off, v);
+        }
+        printf("   firma en su sitio      -> escritura y lectura OK ahi\n");
+        printf("   firma en OTRO offset   -> decodificador desplazado\n");
+        printf("   ninguna firma          -> las escrituras no llegan\n");
+    }
+
+    /* Dejar el generador como estaba: si no, la siguiente prueba sale rara. */
+    wr(R_SRC_FTWA, 0x1999999Au);
+    wr(R_SRC_FTWB, 0x26666666u);
+    wr(R_SRC_SH,   0x00000022u);
+    wr(R_PWR_LEN,  1024u);
+    wr(R_CFG_CH,   0u);
+    printf("\n");
+}
+
+/* ---- Ancho del puerto AXI del PS ----------------------------------------
+ *
+ * El sintoma: solo responden los offsets multiplos de 16 (0x00, 0x10, 0x20,
+ * 0x30, 0x40) y el resto lee cero, mientras que las escrituras SI llegan.
+ *
+ * Eso es exactamente lo que pasa cuando el bus del maestro es de 128 bits y
+ * el esclavo solo tiene 32. Cada latido del bus lleva cuatro palabras; el
+ * esclavo solo pone la suya en la primera, y la CPU, al leer 0x04, recoge la
+ * SEGUNDA palabra de ese latido, que nadie conduce -> cero. Al leer 0x10 ya
+ * es otro latido distinto, la CPU recoge la primera palabra, y sale bien.
+ * Las escrituras funcionan porque la direccion viaja entera y el esclavo no
+ * mira wstrb: se queda con lo que venga en wdata[31:0].
+ *
+ * Y el ancho de HPM0_FPD NO lo fija el bitstream. Lo fija el PS, en
+ * FPD_SLCR.AFI_FS (0xFD615000), y ese registro lo escribe el FSBL a partir
+ * del handoff del proyecto. Al cargar con `fpgautil` el PS se queda como lo
+ * dejo el arranque de la Kria, que pone los dos puertos a 128 bits. El block
+ * design pide 32. De ahi el desajuste.
+ *
+ *   AFI_FS bits [9:8]   DW_SS0_SEL -> HPM0_FPD
+ *          bits [11:10] DW_SS1_SEL -> HPM1_FPD
+ *          0 = 32 bits, 1 = 64 bits, 2 = 128 bits
+ *
+ * `bus` lo lee y lo dice. `bus fix` lo pone a 32 bits y vuelve a volcar los
+ * registros para que se vea si era eso. Es lo mismo que haria el FSBL. */
+
+#define FPD_SLCR_AFI_FS  0xFD615000UL
+
+static const char *dw_name(unsigned v)
+{
+    switch (v & 3u) {
+    case 0: return "32 bits";
+    case 1: return "64 bits";
+    case 2: return "128 bits";
+    default: return "reservado";
+    }
+}
+
+static int cmd_bus(int fix)
+{
+    int fd = open("/dev/mem", O_RDWR | O_SYNC);
+    volatile uint32_t *slcr;
+    uint32_t v;
+    unsigned ss0, ss1;
+
+    if (fd < 0) { perror("/dev/mem"); return 2; }
+    slcr = (volatile uint32_t *)mmap(NULL, 0x1000, PROT_READ | PROT_WRITE,
+                                     MAP_SHARED, fd, (off_t)FPD_SLCR_AFI_FS);
+    close(fd);
+    if ((void *)slcr == MAP_FAILED) { perror("mmap FPD_SLCR"); return 2; }
+
+    v   = slcr[0];
+    ss0 = (v >> 8) & 3u;
+    ss1 = (v >> 10) & 3u;
+    printf("\nFPD_SLCR.AFI_FS = 0x%08X\n", v);
+    printf("  HPM0_FPD : %s   %s\n", dw_name(ss0),
+           ss0 == 0 ? "(lo que pide el block design)"
+                    : "<-- NO CUADRA, el diseno pide 32 bits");
+    printf("  HPM1_FPD : %s   (apagado en este diseno)\n", dw_name(ss1));
+
+    if (ss0 == 0) {
+        printf("\n  El ancho ya es el correcto: el fallo es otro.\n\n");
+        return 0;
+    }
+    if (!fix) {
+        printf("\n  Para arreglarlo:  sudo scanner_ctl bus fix\n\n");
+        return 1;
+    }
+
+    /* Solo los cuatro bits del ancho; el resto del registro no se toca. */
+    slcr[0] = (v & ~0x00000F00u) | 0x00000000u;
+    v = slcr[0];
+    printf("\n  escrito. AFI_FS = 0x%08X -> HPM0_FPD %s\n",
+           v, dw_name((v >> 8) & 3u));
+    if (((v >> 8) & 3u) != 0) {
+        printf("  el registro no acepta la escritura (¿XMPU?).\n\n");
+        return 1;
+    }
+
+    printf("\n  y ahora los registros del escaner:\n");
+    cmd_raw();
+    return 0;
+}
+
+/* El ancho de HPM0_FPD se pierde en CADA arranque: `fpgautil` carga la PL pero
+ * no reconfigura el PS, y el arranque de la Kria deja los dos puertos a 128
+ * bits. Confirmado en silicio el 14-sep-2026: con 128 bits solo se leian bien
+ * los offsets multiplos de 16 y el resto devolvia cero.
+ *
+ * Por eso se comprueba y se corrige al principio de cada invocacion, en vez de
+ * dejarlo a que alguien se acuerde de lanzar `bus fix`. Es exactamente lo que
+ * habria hecho el FSBL si la placa arrancara con el handoff de este proyecto. */
+static void ensure_bus32(void)
+{
+    int fd = open("/dev/mem", O_RDWR | O_SYNC);
+    volatile uint32_t *slcr;
+    uint32_t v;
+
+    if (fd < 0) return;
+    slcr = (volatile uint32_t *)mmap(NULL, 0x1000, PROT_READ | PROT_WRITE,
+                                     MAP_SHARED, fd, (off_t)FPD_SLCR_AFI_FS);
+    close(fd);
+    if ((void *)slcr == MAP_FAILED) return;
+
+    v = slcr[0];
+    if (((v >> 8) & 3u) != 0) {
+        slcr[0] = v & ~0x00000F00u;
+        printf("[AFI_FS 0x%08X -> 0x%08X: HPM0_FPD a 32 bits, "
+               "que es lo que pide el diseno]\n", v, slcr[0]);
+    }
+    munmap((void *)slcr, 0x1000);
+}
+
 static void cmd_info(void)
 {
     printf("\nscanner_axi en la PL\n");
@@ -208,9 +475,11 @@ static int cmd_run(unsigned long long target_samples)
     return 1;
 }
 
-static int cmd_test(void)
+static int cmd_test(int n_arg)
 {
-    int n = (int)rd(R_NCH);
+    /* NCH se puede pasar a mano: si el registro leyera mal, la prueba no
+     * tiene por que quedarse bloqueada por eso. */
+    int n = n_arg > 0 ? n_arg : (int)rd(R_NCH);
     if (n < 4) { fprintf(stderr, "hacen falta al menos 4 canales\n"); return 2; }
 
     printf("\nPrueba de discriminacion en hardware (T5 del testbench, en silicio)\n");
@@ -275,15 +544,24 @@ int main(int argc, char **argv)
     }
     if (a >= argc) {
         fprintf(stderr,
-            "uso: %s [--base 0xA0000000] {info|test|run N|dump}\n", argv[0]);
+            "uso: %s [--base 0xA0000000] {info|raw|probe|map|bus [fix]|test [N]|run N|dump}\n", argv[0]);
         return 2;
     }
+    ensure_bus32();
     if (map_regs(base) != 0) return 2;
     if (check_id() != 0) return 2;
 
     if (!strcmp(argv[a], "info")) { cmd_info(); return 0; }
     if (!strcmp(argv[a], "dump")) { cmd_dump(); return 0; }
-    if (!strcmp(argv[a], "test")) return cmd_test();
+    if (!strcmp(argv[a], "raw"))   { cmd_raw();   return 0; }
+    if (!strcmp(argv[a], "probe")) { cmd_probe(); return 0; }
+    if (!strcmp(argv[a], "map"))   { cmd_map();   return 0; }
+    if (!strcmp(argv[a], "bus"))
+        return cmd_bus((a + 1 < argc) && !strcmp(argv[a+1], "fix"));
+    if (!strcmp(argv[a], "test")) {
+        int nc = (a + 1 < argc) ? atoi(argv[a+1]) : 0;
+        return cmd_test(nc);
+    }
     if (!strcmp(argv[a], "run")) {
         unsigned long long n = (a + 1 < argc) ? strtoull(argv[a+1], NULL, 0)
                                               : 100000000ULL;
