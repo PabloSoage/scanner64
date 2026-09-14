@@ -542,69 +542,70 @@ static int cmd_test(int n_arg)
 
 /* Medida DETERMINISTA, para contrastarla con el modelo al bit.
  *
- * `test` mide una ventana cualquiera de un escaner que lleva rato corriendo, y
- * eso vale para ver que discrimina pero no para comparar numeros: la ventana
- * de 4096 salidas no es un periodo entero del tono, asi que de una ventana a
- * otra la fase cambia y la potencia baila unas milesimas. Con los tonos da
- * igual --la potencia no depende de la fase-- pero la FUGA de los canales
- * vacios si, y es justo la que mas dice sobre si el CIC esta bien.
+ * Primer intento: medir la primera ventana de potencia desde el reset. NO
+ * FUNCIONA, y la razon esta escrita en rtl/comb_bank.v: el estado de los
+ * peines vive en LUTRAM distribuida y se inicializa por `initial`, es decir,
+ * con el bitstream. Un reset en caliente NO lo limpia. Los integradores si
+ * vuelven a cero, los peines arrastran el estado de la prueba anterior, y las
+ * primeras salidas son basura --basura grande, porque el peine resta un estado
+ * sin relacion y satura--. Un par de muestras a fondo de escala se comen una
+ * ventana de 4096. Es el precio de ahorrarse 7001 flip-flops, y esta asumido.
  *
- * La solucion es medir LA PRIMERA ventana desde el reset. Bajar `run` deja en
- * reset el generador y el escaner: los NCO vuelven a fase cero y los CIC a
- * cero. Y como el NCO de cada canal solo avanza con `in_valid`, a partir de
- * ahi todo es reproducible ciclo a ciclo. El modelo arranca igual, desde cero,
- * asi que tiene que dar el mismo numero.
+ * Asi que no se usa la ventana de potencia: se usan los TAP. `tap_i`/`tap_q`
+ * congelan la ULTIMA salida del canal seleccionado y `out_cnt` dice cual es.
+ * Leer la terna (indice, I, Q) da un punto exacto de la senal, sin depender de
+ * donde empiece ninguna ventana:
  *
- * Ojo al orden: las sintonias de los canales viven dentro de scanner_top y se
- * borran al bajar `run`, asi que hay que programarlas DESPUES de subirlo. */
+ *   - `run` a cero deja los integradores a cero y los NCO a fase cero, y el
+ *     NCO de cada canal solo avanza con in_valid, asi que la secuencia es
+ *     reproducible ciclo a ciclo desde la primera muestra.
+ *   - el estado sucio de los peines se va en tres rondas; midiendo a partir de
+ *     la salida ~3000, hace rato que lo que hay dentro lo pusieron las
+ *     muestras de ESTA tirada, que son las mismas que ve el modelo.
+ *   - y no hace falta acertar el numero de salidas: se lee.
+ *
+ * Un canal por tirada, porque out_cnt cuenta las salidas del canal apuntado
+ * por rd_ch. */
 static int cmd_golden(void)
 {
     static const double freqs[4] = { F_TONE_A, F_TONE_B, 22200000.0, 3300000.0 };
+    uint32_t cnt[4];
+    int32_t  ti[4], tq[4];
     int k;
-    double t0;
 
     if ((int)rd(R_NCH) < 4) { fprintf(stderr, "hacen falta 4 canales\n"); return 2; }
 
-    wr(R_CTRL, 0);                      /* reset del generador y del escaner */
-    usleep(1000);
-    wr(R_CTRL, CTRL_RUN);               /* fuera de reset, generador parado */
+    for (k = 0; k < 4; k++) {
+        wr(R_CTRL, 0);                          /* reset: integradores y NCO */
+        usleep(1000);
+        wr(R_CTRL, CTRL_RUN);                   /* fuera de reset, parado */
 
-    wr(R_SRC_FTWA, tuning_word(F_TONE_A));
-    wr(R_SRC_FTWB, tuning_word(F_TONE_B));
-    wr(R_SRC_SH,   0x022);
-    wr(R_PWR_LEN,  4096);
-    for (k = 0; k < 4; k++) set_channel(k, freqs[k]);
+        wr(R_SRC_FTWA, tuning_word(F_TONE_A));
+        wr(R_SRC_FTWB, tuning_word(F_TONE_B));
+        wr(R_SRC_SH,   0x022);
+        wr(R_PWR_LEN,  4096);
+        set_channel(k, freqs[k]);               /* la sintonia va DESPUES de run */
+        wr(R_RD_CH, (uint32_t)k);               /* tap_ch sigue a rd_ch */
 
-    wr(R_CTRL, CTRL_RUN | CTRL_SRC_EN); /* aqui empieza a contar el tiempo */
+        wr(R_CTRL, CTRL_RUN | CTRL_SRC_EN);     /* arranca la secuencia */
+        usleep(2000);                           /* ~200k muestras, ~3000 salidas */
+        wr(R_CTRL, CTRL_RUN);                   /* congela el tap */
 
-    /* La primera ventana son 4096 salidas x 64 = 262144 ciclos = 2,6 ms. El
-     * sondeo por AXI tarda microsegundos, asi que se para muchisimo antes de
-     * que termine la segunda y lo que queda congelado es la ventana 1. */
-    t0 = now_s();
-    while (!(rd(R_READY) & 1u)) {
-        if (now_s() - t0 > 2.0) {
-            fprintf(stderr, "la primera ventana no se completa\n");
-            wr(R_CTRL, CTRL_RUN);
-            return 1;
-        }
+        cnt[k] = rd(R_OUT_CNT);
+        ti[k]  = (int32_t)rd(R_TAP_I);
+        tq[k]  = (int32_t)rd(R_TAP_Q);
     }
-    wr(R_CTRL, CTRL_RUN);               /* parar el generador de inmediato */
 
-    printf("\nPrimera ventana desde el reset, 4096 salidas por canal\n");
-    printf("  Para contrastar con el modelo:  model/golden_hw.py\n\n");
-    printf("  canal   sintonia      potencia\n");
+    printf("\nPuntos exactos de la senal, uno por canal\n\n");
+    printf("  canal   sintonia      salida n.      I          Q\n");
     for (k = 0; k < 4; k++)
-        printf("   %3d   %6.1f MHz   %18llu\n",
-               k, freqs[k] / 1e6, (unsigned long long)read_pwr(k));
+        printf("   %3d   %6.1f MHz   %9u   %8d   %8d\n",
+               k, freqs[k] / 1e6, cnt[k], ti[k], tq[k]);
 
-    {
-        uint64_t smp = ((uint64_t)rd(R_SMP_HI) << 32) | rd(R_SMP_LO);
-        uint32_t out = rd(R_OUT_CNT);
-        printf("\n  muestras entradas : %llu\n", (unsigned long long)smp);
-        printf("  salidas del ch0   : %u   (la ventana son 4096)\n", out);
-        printf("  muestras/salida   : %.3f   (CIC_R = %d)\n\n",
-               out ? (double)smp / out : 0.0, CIC_R);
-    }
+    printf("\n  Contrastalo con el modelo:\n\n    python golden_hw.py");
+    for (k = 0; k < 4; k++)
+        printf(" %u %d %d", cnt[k], ti[k], tq[k]);
+    printf("\n\n");
     return 0;
 }
 
