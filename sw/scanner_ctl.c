@@ -487,6 +487,12 @@ static int cmd_test(int n_arg)
            F_TONE_A / 1e6, F_TONE_B / 1e6);
 
     wr(R_CTRL, CTRL_RUN);
+    /* Programar el generador EXPLICITAMENTE. No fiarse de los valores de
+     * reset: cualquier prueba anterior puede haberlos dejado tocados, y
+     * entonces esta prueba busca tonos donde no los hay y falla por nada. */
+    wr(R_SRC_FTWA, tuning_word(F_TONE_A));
+    wr(R_SRC_FTWB, tuning_word(F_TONE_B));
+    wr(R_SRC_SH,   0x022);
     wr(R_PWR_LEN, 4096);
 
     /* Mitad de canales sobre los tonos, mitad sobre banda vacia. */
