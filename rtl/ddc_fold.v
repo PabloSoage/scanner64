@@ -80,7 +80,14 @@ module ddc_fold #(
     output reg                       out_valid,
     output reg  [SLOT_W-1:0]         out_slot,
     output reg  signed [CIC_W-1:0]   tap_i,
-    output reg  signed [CIC_W-1:0]   tap_q
+    output reg  signed [CIC_W-1:0]   tap_q,
+
+    // Se pega en alto si llega una muestra mientras la ronda anterior sigue
+    // en curso. El plegado EXIGE Fs <= Fclk/FOLD; si se le alimenta mas rapido
+    // descarta muestras, y lo haria en silencio. Una salida diezmada con
+    // muestras perdidas sigue pareciendo una señal, asi que el unico modo de
+    // enterarse es que el propio hardware lo diga.
+    output reg                       overrun
 );
 
     localparam integer CNT_W   = $clog2(CIC_R);
@@ -147,6 +154,7 @@ module ddc_fold #(
             out_slot  <= {SLOT_W{1'b0}};
             tap_i <= {CIC_W{1'b0}};
             tap_q <= {CIC_W{1'b0}};
+            overrun <= 1'b0;
             for (k = 0; k < FOLD; k = k + 1) begin
                 phase[k] <= {PHASE_W{1'b0}};
                 ftw[k]   <= {PHASE_W{1'b0}};
@@ -158,6 +166,7 @@ module ddc_fold #(
             end
         end else begin
             if (cfg_we) ftw[cfg_slot] <= cfg_ftw;
+            if (in_valid && busy) overrun <= 1'b1;
 
             // --- Etapa 0: arranque de ronda y direccionamiento de la ROM ----
             v1 <= 1'b0;

@@ -45,6 +45,7 @@
 //   0x40  TAP_I     RO  ultima muestra I del canal RD_CH (con signo, 18 b)
 //   0x44  TAP_Q     RO  ultima muestra Q
 //   0x48  TAP_CNT   RO  cuantas muestras I/Q ha soltado ese canal
+//   0x4C  STATUS    RO  [0] fold_overrun   [5:1] FOLD sintetizado
 //
 // Los TAP no sirven para volcar datos --cambian a 1.5 MSPS y AXI-Lite no da
 // para tanto-- pero si para ver que hay actividad y que los valores son
@@ -67,6 +68,7 @@ module scanner_axi #(
     parameter integer CIC_GROWTH = 18,
     parameter integer PWR_W      = 48,
     parameter integer UNITS_PER_BANK = 32,
+    parameter integer FOLD       = 1,
     parameter         LUT_FILE   = "sin_lut.mem",
     parameter integer C_S_AXI_ADDR_WIDTH = 7      // 128 bytes = 32 registros
 ) (
@@ -132,13 +134,14 @@ module scanner_axi #(
     wire [N_CH-1:0]         pwr_ready;
     wire                    tap_valid;
     wire signed [OUT_W-1:0] tap_i, tap_q;
+    wire                    fold_overrun;
 
     scanner_top #(
         .N_CH (N_CH), .IN_W (IN_W), .OUT_W (OUT_W), .PHASE_W (PHASE_W),
         .LUT_ADDR_W (LUT_ADDR_W), .LUT_W (LUT_W), .MIX_W (MIX_W),
         .CIC_N (CIC_N), .CIC_R (CIC_R), .CIC_W (CIC_W),
         .CIC_GROWTH (CIC_GROWTH), .PWR_W (PWR_W),
-        .UNITS_PER_BANK (UNITS_PER_BANK), .LUT_FILE (LUT_FILE)
+        .UNITS_PER_BANK (UNITS_PER_BANK), .FOLD (FOLD), .LUT_FILE (LUT_FILE)
     ) u_scan (
         .clk (clk), .rst_n (rst_n && r_run),
         .in_valid (src_valid), .in_data (src_data),
@@ -146,7 +149,7 @@ module scanner_axi #(
         .cfg_ftw (r_cfg_ftw), .cfg_pwr_len (r_pwr_len), .cfg_clear (r_clear),
         .rd_ch (r_rd_ch[CH_W-1:0]), .rd_pwr (rd_pwr), .pwr_ready (pwr_ready),
         .tap_ch (r_rd_ch[CH_W-1:0]), .tap_valid (tap_valid),
-        .tap_i (tap_i), .tap_q (tap_q)
+        .tap_i (tap_i), .tap_q (tap_q), .fold_overrun (fold_overrun)
     );
 
     // ---- Contadores: la prueba de que no se pierde una muestra ------------
@@ -271,6 +274,11 @@ module scanner_axi #(
             5'h10: rmux = {{(32-OUT_W){tap_i_r[OUT_W-1]}}, tap_i_r};
             5'h11: rmux = {{(32-OUT_W){tap_q_r[OUT_W-1]}}, tap_q_r};
             5'h12: rmux = out_cnt;
+            // STATUS. El bit de desbordamiento importa mas de lo que su tamaño
+            // sugiere: con plegado, alimentar mas rapido de Fs = Fclk/FOLD
+            // descarta muestras y la salida sigue pareciendo una señal. Sin
+            // este bit, esa perdida es invisible desde software.
+            5'h13: rmux = {26'd0, FOLD[4:0], fold_overrun};
             default: rmux = 32'd0;
         endcase
     end

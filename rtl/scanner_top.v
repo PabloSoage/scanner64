@@ -57,6 +57,11 @@ module scanner_top #(
     // Unidades (cadenas I o Q) por banco de peines. Tiene que ser par y menor
     // que CIC_R, para que la ronda termine antes del siguiente diezmado.
     parameter integer UNITS_PER_BANK = 32,
+    // Canales por juego de NCO, mezclador e integradores. Con 1 cada canal
+    // tiene el suyo, que es el diseno validado en silicio. Con mas, se
+    // multiplexan en el tiempo: vale floor(Fclk/Fs), y a menos ancho de banda
+    // mas canales por la misma area.
+    parameter integer FOLD       = 1,
     parameter         LUT_FILE   = "sin_lut.mem"
 ) (
     input  wire                        clk,
@@ -82,9 +87,16 @@ module scanner_top #(
     input  wire [$clog2(N_CH)-1:0]     tap_ch,
     output wire                        tap_valid,
     output wire signed [OUT_W-1:0]     tap_i,
-    output wire signed [OUT_W-1:0]     tap_q
+    output wire signed [OUT_W-1:0]     tap_q,
+
+    // Con FOLD > 1 el escaner exige Fs <= Fclk/FOLD. Si le llegan muestras mas
+    // rapido las descarta, y en silencio la salida seguiria pareciendo una
+    // señal. Este bit se pega en alto la primera vez que ocurre.
+    output wire                        fold_overrun
 );
 
+    localparam integer N_SET   = (N_CH + FOLD - 1) / FOLD;
+    localparam integer SLOT_W  = (FOLD > 1) ? $clog2(FOLD) : 1;
     localparam integer CH_PER_BANK = UNITS_PER_BANK / 2;
     localparam integer N_BANK      = (N_CH + CH_PER_BANK - 1) / CH_PER_BANK;
     localparam integer UW          = $clog2(UNITS_PER_BANK);
@@ -103,12 +115,25 @@ module scanner_top #(
     end
 
     // ---- Frentes de canal, a la tasa de entrada ----------------------------
+    //
+    // DOS CAMINOS, Y NO POR INDECISION.
+    //
+    // Con FOLD = 1 se instancian N_CH frentes independientes: ese es el diseno
+    // validado bit a bit contra el modelo y medido en silicio, y no se toca.
+    // Con FOLD > 1 se instancian N_SET juegos plegados, cada uno atendiendo
+    // FOLD canales por multiplexado en el tiempo.
+    //
+    // Mantener intacto el camino de FOLD = 1 cuesta una rama de generate y
+    // evita que un experimento nuevo arrastre consigo lo unico que ya sabemos
+    // que funciona en la placa. Mismo criterio que con CIC_USE_DSP.
     wire [N_CH-1:0]         fr_dec;
     wire signed [CIC_W-1:0] fr_tap_i [0:N_CH-1];
     wire signed [CIC_W-1:0] fr_tap_q [0:N_CH-1];
+    wire                    fold_done;
 
-    genvar g;
+    genvar g, f;
     generate
+    if (FOLD <= 1) begin : gen_plain
         for (g = 0; g < N_CH; g = g + 1) begin : gen_front
             ddc_front #(
                 .IN_W (IN_W), .PHASE_W (PHASE_W), .LUT_ADDR_W (LUT_ADDR_W),
@@ -122,11 +147,82 @@ module scanner_top #(
                 .tap_i (fr_tap_i[g]), .tap_q (fr_tap_q[g])
             );
         end
+        assign fold_done    = 1'b0;
+        assign fold_overrun = 1'b0;   // sin plegado no hay ronda que invadir
+    end else begin : gen_folded
+        for (g = 0; g < N_SET; g = g + 1) begin : gen_set
+            wire                    s_ov;
+            wire [SLOT_W-1:0]       s_os;
+            wire signed [CIC_W-1:0] s_ti, s_tq;
+            wire                    s_ovr;
+            wire                    s_cfg = cfg_we && ((cfg_ch / FOLD) == g);
+
+            ddc_fold #(
+                .FOLD (FOLD), .IN_W (IN_W), .PHASE_W (PHASE_W),
+                .LUT_ADDR_W (LUT_ADDR_W), .LUT_W (LUT_W), .MIX_W (MIX_W),
+                .CIC_N (CIC_N), .CIC_R (CIC_R), .CIC_W (CIC_W),
+                .LUT_FILE (LUT_FILE)
+            ) u_fold (
+                .clk (clk), .rst_n (rst_n),
+                .cfg_we (s_cfg), .cfg_slot (cfg_ch[SLOT_W-1:0]),
+                .cfg_ftw (cfg_ftw),
+                .in_valid (in_valid), .in_data (in_data), .ready (),
+                .out_valid (s_ov), .out_slot (s_os),
+                .tap_i (s_ti), .tap_q (s_tq), .overrun (s_ovr)
+            );
+
+            // CAPTURA. El banco de peines quiere todas sus unidades a la vez,
+            // pero el plegado las emite una por ciclo. Estos registros retienen
+            // la ronda entera para que din_flat este estable en el pulso de
+            // arranque, que es el unico instante en que el banco lo mira.
+            reg signed [CIC_W-1:0] cap_i [0:FOLD-1];
+            reg signed [CIC_W-1:0] cap_q [0:FOLD-1];
+            integer c;
+            always @(posedge clk) begin
+                if (!rst_n) begin
+                    for (c = 0; c < FOLD; c = c + 1) begin
+                        cap_i[c] <= {CIC_W{1'b0}};
+                        cap_q[c] <= {CIC_W{1'b0}};
+                    end
+                end else if (s_ov) begin
+                    cap_i[s_os] <= s_ti;
+                    cap_q[s_os] <= s_tq;
+                end
+            end
+
+            for (f = 0; f < FOLD; f = f + 1) begin : gen_expose
+                if (g*FOLD + f < N_CH) begin : gen_live
+                    assign fr_tap_i[g*FOLD + f] = cap_i[f];
+                    assign fr_tap_q[g*FOLD + f] = cap_q[f];
+                    assign fr_dec  [g*FOLD + f] = 1'b0;   // aqui no se usa
+                end
+            end
+        end
+        // Todos los juegos ven el mismo in_valid y salen del mismo reset, asi
+        // que diezman en la misma ronda. La ronda esta completa cuando el juego
+        // 0 emite su ultima ranura.
+        assign fold_done = gen_set[0].s_ov &&
+                           (gen_set[0].s_os == (FOLD[SLOT_W-1:0] - 1'b1));
+
+        // Basta con que UN juego pierda una muestra para que el barrido deje
+        // de ser fiable, asi que se juntan todos en un solo bit.
+        wire [N_SET-1:0] ovr_bits;
+        for (g = 0; g < N_SET; g = g + 1) begin : gen_ovr
+            assign ovr_bits[g] = gen_set[g].s_ovr;
+        end
+        assign fold_overrun = |ovr_bits;
+    end
     endgenerate
 
-    // Todos los frentes comparten in_valid y arrancan del mismo reset, asi que
-    // su dec_now cae en el mismo ciclo. Se toma el del canal 0 como referencia.
-    wire dec_pulse = fr_dec[0];
+    // Con FOLD = 1 todos los frentes comparten in_valid, su dec_now cae en el
+    // mismo ciclo y basta el del canal 0. Con plegado hay que esperar a que la
+    // ronda entera este capturada, asi que el pulso llega un ciclo despues.
+    reg fold_done_d;
+    always @(posedge clk) begin
+        if (!rst_n) fold_done_d <= 1'b0;
+        else        fold_done_d <= fold_done;
+    end
+    wire dec_pulse = (FOLD <= 1) ? fr_dec[0] : fold_done_d;
 
     // ---- Bancos de peines compartidos --------------------------------------
     wire [N_BANK-1:0]        bk_valid;
