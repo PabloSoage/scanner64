@@ -102,8 +102,20 @@ module scanner_top #(
     localparam integer UW          = $clog2(UNITS_PER_BANK);
 
     // ---- Registros de sintonia, uno por canal ------------------------------
+    //
+    // Con FOLD > 1 este array se escribe y no lo lee nadie: la sintonia va
+    // directa a la ranura de su ddc_fold, que ya la guarda. Se deja tal cual a
+    // proposito. Probe a envolverlo en un generate para que solo existiera con
+    // FOLD = 1, pensando que el reset lo mantenia vivo, y medido en el punto de
+    // 256 canales el ahorro fue de CERO registros: Vivado ya lo eliminaba. El
+    // analisis de codigo muerto va hacia atras desde las salidas, y un reset no
+    // es una salida.
+    //
+    // Un generate que no ahorra nada solo complica el modulo y obliga al
+    // testbench a perseguir la ruta jerarquica. Un comentario cuesta menos.
     reg [PHASE_W-1:0] ftw [0:N_CH-1];
 
+    genvar g, f;
     integer k;
     always @(posedge clk) begin
         if (!rst_n) begin
@@ -131,7 +143,6 @@ module scanner_top #(
     wire signed [CIC_W-1:0] fr_tap_q [0:N_CH-1];
     wire                    fold_done;
 
-    genvar g, f;
     generate
     if (FOLD <= 1) begin : gen_plain
         for (g = 0; g < N_CH; g = g + 1) begin : gen_front
@@ -323,6 +334,25 @@ module scanner_top #(
     // ciclos como minimo, porque antes tiene que pasar la rama I.
     localparam integer CHB_W = (CH_PER_BANK > 1) ? $clog2(CH_PER_BANK) : 1;
 
+    // ANCHO DEL CONTADOR DE VENTANA, y no es una eleccion de ahorro sino de
+    // correccion. Cada mag2 vale como mucho 2*(2^(OUT_W-1))^2 = 2^35 con
+    // OUT_W=18, asi que el acumulador de PWR_W=48 bits aguanta
+    //
+    //     2^48 / 2^35 = 2^13 = 8192 muestras
+    //
+    // y ni una mas. Con el contador de 32 bits que habia, pedir una ventana de
+    // 100.000 muestras era perfectamente posible: el acumulador desbordaba en
+    // silencio y la potencia leida era basura con pinta de dato. El contador
+    // estrecho HACE IMPOSIBLE pedir eso, y de paso ahorra 19 registros por
+    // canal.
+    localparam integer PWR_CNT_W = PWR_W - 2*OUT_W + 1;         // 13 con 48/18
+    localparam [PWR_CNT_W-1:0] PWR_LEN_MAX = {PWR_CNT_W{1'b1}};
+
+    // La ventana pedida, recortada a lo que el acumulador puede sostener.
+    wire [PWR_CNT_W-1:0] pwr_len_eff =
+        (cfg_pwr_len > {{(32-PWR_CNT_W){1'b0}}, PWR_LEN_MAX})
+            ? PWR_LEN_MAX : cfg_pwr_len[PWR_CNT_W-1:0];
+
     // Vector EMPAQUETADO, no un array de wires. Indexar un array desempaquetado
     // con una variable dentro de un assign continuo es terreno resbaladizo y
     // aqui devolvia X; con una seleccion de parte sobre un vector plano no hay
@@ -364,7 +394,7 @@ module scanner_top #(
             wire signed [2*OUT_W-1:0] mag2 = pw_i*pw_i + pw_q*pw_q;
 
             reg [PWR_W-1:0]       acc  [0:CH_PER_BANK-1];
-            reg [31:0]            cnt  [0:CH_PER_BANK-1];
+            reg [PWR_CNT_W-1:0]   cnt  [0:CH_PER_BANK-1];
             reg [PWR_W-1:0]       hold [0:CH_PER_BANK-1];
             reg [CH_PER_BANK-1:0] done;
 
@@ -373,20 +403,20 @@ module scanner_top #(
                 if (!rst_n || cfg_clear) begin
                     for (kk = 0; kk < CH_PER_BANK; kk = kk + 1) begin
                         acc[kk]  <= {PWR_W{1'b0}};
-                        cnt[kk]  <= 32'd0;
+                        cnt[kk]  <= {PWR_CNT_W{1'b0}};
                         hold[kk] <= {PWR_W{1'b0}};
                     end
                     done <= {CH_PER_BANK{1'b0}};
                 end else if (pw_v) begin
-                    if (cnt[pw_k] + 1 >= cfg_pwr_len) begin
+                    if (cnt[pw_k] + 1'b1 >= pwr_len_eff) begin
                         // Ventana completa: se congela el valor y se reinicia.
                         hold[pw_k] <= acc[pw_k] + mag2;
                         acc[pw_k]  <= {PWR_W{1'b0}};
-                        cnt[pw_k]  <= 32'd0;
+                        cnt[pw_k]  <= {PWR_CNT_W{1'b0}};
                         done[pw_k] <= 1'b1;
                     end else begin
                         acc[pw_k] <= acc[pw_k] + mag2;
-                        cnt[pw_k] <= cnt[pw_k] + 1;
+                        cnt[pw_k] <= cnt[pw_k] + 1'b1;
                     end
                 end
             end
