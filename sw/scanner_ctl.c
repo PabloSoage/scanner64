@@ -677,6 +677,22 @@ static void cmd_rate(void)
     printf("\n");
 }
 
+/* Arrancar y parar sin dejar nada corriendo.
+ *
+ * `run` bloquea hasta que termina, y matarlo a mitad deja el generador
+ * encendido -- justo lo que contamina la fase siguiente de una medida que
+ * alterna. Con estos dos el guion controla el escaner y nada mas queda vivo. */
+static void cmd_start(void)
+{
+    wr(R_CTRL, CTRL_RUN);
+    wr(R_CTRL, CTRL_RUN | CTRL_SRC_EN);
+}
+
+static void cmd_stop(void)
+{
+    wr(R_CTRL, CTRL_RUN);            /* fuera de reset, generador parado */
+}
+
 int main(int argc, char **argv)
 {
     unsigned long base = 0xA0000000UL;
@@ -687,7 +703,7 @@ int main(int argc, char **argv)
     }
     if (a >= argc) {
         fprintf(stderr,
-            "uso: %s [--base 0xA0000000] {info|raw|probe|map|bus [fix]|test [N]|golden|rate|run N|dump}\n", argv[0]);
+            "uso: %s [--base 0xA0000000] {info|raw|probe|map|bus [fix]|test [N]|golden|rate|start|stop|run N|dump}\n", argv[0]);
         return 2;
     }
     ensure_bus32();
@@ -698,6 +714,8 @@ int main(int argc, char **argv)
     if (!strcmp(argv[a], "dump")) { cmd_dump(); return 0; }
     if (!strcmp(argv[a], "golden")) return cmd_golden();
     if (!strcmp(argv[a], "rate"))   { cmd_rate();   return 0; }
+    if (!strcmp(argv[a], "start"))  { cmd_start();  return 0; }
+    if (!strcmp(argv[a], "stop"))   { cmd_stop();   return 0; }
     if (!strcmp(argv[a], "raw"))   { cmd_raw();   return 0; }
     if (!strcmp(argv[a], "probe")) { cmd_probe(); return 0; }
     if (!strcmp(argv[a], "map"))   { cmd_map();   return 0; }
