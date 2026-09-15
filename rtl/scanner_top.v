@@ -302,42 +302,110 @@ module scanner_top #(
         end
     end
 
-    // ---- Medidor de potencia, uno por canal --------------------------------
-    reg [PWR_W-1:0]  pwr_acc  [0:N_CH-1];
-    reg [31:0]       pwr_cnt  [0:N_CH-1];
-    reg [PWR_W-1:0]  pwr_hold [0:N_CH-1];
-    reg [N_CH-1:0]   pwr_done;
+    // ---- Medidor de potencia, UNO POR BANCO --------------------------------
+    //
+    // Antes habia uno por canal: dos multiplicadores cada uno, 2*N_CH DSP48.
+    // Con 16 canales eran 32 DSP de los 80 del diseno -- mas que los frentes.
+    //
+    // Y era gasto inutil por algo que ya estaba en la arquitectura desde B7:
+    // los canales YA NO salen a la vez. comb_bank los emite de uno en uno, asi
+    // que dentro de un banco publica como mucho un canal por ciclo. Un solo
+    // juego de multiplicadores da servicio a todos los canales del banco.
+    //
+    //     2*N_CH DSP  ->  2*N_BANK DSP
+    //
+    // Con 16 canales y un banco: 32 -> 2. Con 64 y cuatro bancos: 128 -> 8.
+    //
+    // El estado sigue siendo por canal --acumulador, contador y valor
+    // congelado-- pero eso son registros, no multiplicadores, y son justo lo
+    // que no se puede compartir. Se lee y se escribe en el mismo ciclo, asi que
+    // no hay riesgo de tuberia: la siguiente publicacion del banco tarda dos
+    // ciclos como minimo, porque antes tiene que pasar la rama I.
+    localparam integer CHB_W = (CH_PER_BANK > 1) ? $clog2(CH_PER_BANK) : 1;
 
+    // Vector EMPAQUETADO, no un array de wires. Indexar un array desempaquetado
+    // con una variable dentro de un assign continuo es terreno resbaladizo y
+    // aqui devolvia X; con una seleccion de parte sobre un vector plano no hay
+    // ambiguedad.
+    wire [N_BANK*PWR_W-1:0] pwr_flat;
+
+    genvar pb, pc;
     generate
-        for (g = 0; g < N_CH; g = g + 1) begin : gen_pwr
-            // |I|^2 + |Q|^2 acumulado sobre una ventana. Dos multiplicadores
-            // mas por canal (2 DSP48).
-            wire signed [2*OUT_W-1:0] mag2 = ch_i[g]*ch_i[g] + ch_q[g]*ch_q[g];
+        for (pb = 0; pb < N_BANK; pb = pb + 1) begin : gen_pwr
+            // Que canal de este banco publica, si alguno. La rama Q llega
+            // detras de la I, asi que el par esta completo en la unidad impar,
+            // que es el mismo instante en que la realineacion lo publica.
+            wire [UW-1:0]    u_now = bk_unit[pb];
+            wire [CHB_W-1:0] k_now = u_now[UW-1:1];
+            wire             pub   = bk_valid[pb] && u_now[0] &&
+                                     ((pb*CH_PER_BANK + (u_now >> 1)) < N_CH);
+
+            reg                    pw_v;
+            reg [CHB_W-1:0]        pw_k;
+            reg signed [OUT_W-1:0] pw_i, pw_q;
 
             always @(posedge clk) begin
-                if (!rst_n || cfg_clear) begin
-                    pwr_acc[g]  <= {PWR_W{1'b0}};
-                    pwr_cnt[g]  <= 32'd0;
-                    pwr_hold[g] <= {PWR_W{1'b0}};
-                    pwr_done[g] <= 1'b0;
-                end else if (ch_valid[g]) begin
-                    if (pwr_cnt[g] + 1 >= cfg_pwr_len) begin
-                        // Ventana completa: se congela el valor y se reinicia.
-                        pwr_hold[g] <= pwr_acc[g] + mag2;
-                        pwr_acc[g]  <= {PWR_W{1'b0}};
-                        pwr_cnt[g]  <= 32'd0;
-                        pwr_done[g] <= 1'b1;
-                    end else begin
-                        pwr_acc[g] <= pwr_acc[g] + mag2;
-                        pwr_cnt[g] <= pwr_cnt[g] + 1;
+                if (!rst_n) begin
+                    pw_v <= 1'b0;
+                    pw_k <= {CHB_W{1'b0}};
+                    pw_i <= {OUT_W{1'b0}};
+                    pw_q <= {OUT_W{1'b0}};
+                end else begin
+                    pw_v <= pub;
+                    if (pub) begin
+                        pw_k <= k_now;
+                        pw_i <= i_hold[pb*CH_PER_BANK + (u_now >> 1)];
+                        pw_q <= bk_data[pb][CIC_GROWTH +: OUT_W];
                     end
+                end
+            end
+
+            // Los dos unicos multiplicadores del banco.
+            wire signed [2*OUT_W-1:0] mag2 = pw_i*pw_i + pw_q*pw_q;
+
+            reg [PWR_W-1:0]       acc  [0:CH_PER_BANK-1];
+            reg [31:0]            cnt  [0:CH_PER_BANK-1];
+            reg [PWR_W-1:0]       hold [0:CH_PER_BANK-1];
+            reg [CH_PER_BANK-1:0] done;
+
+            integer kk;
+            always @(posedge clk) begin
+                if (!rst_n || cfg_clear) begin
+                    for (kk = 0; kk < CH_PER_BANK; kk = kk + 1) begin
+                        acc[kk]  <= {PWR_W{1'b0}};
+                        cnt[kk]  <= 32'd0;
+                        hold[kk] <= {PWR_W{1'b0}};
+                    end
+                    done <= {CH_PER_BANK{1'b0}};
+                end else if (pw_v) begin
+                    if (cnt[pw_k] + 1 >= cfg_pwr_len) begin
+                        // Ventana completa: se congela el valor y se reinicia.
+                        hold[pw_k] <= acc[pw_k] + mag2;
+                        acc[pw_k]  <= {PWR_W{1'b0}};
+                        cnt[pw_k]  <= 32'd0;
+                        done[pw_k] <= 1'b1;
+                    end else begin
+                        acc[pw_k] <= acc[pw_k] + mag2;
+                        cnt[pw_k] <= cnt[pw_k] + 1;
+                    end
+                end
+            end
+
+            // Modulo, no seleccion de parte: rd_ch tiene $clog2(N_CH) bits, que
+            // con pocos canales son MENOS que CHB_W, y rd_ch[CHB_W-1:0] sobre
+            // una señal mas estrecha devuelve X. Costo un testbench en rojo.
+            assign pwr_flat[pb*PWR_W +: PWR_W] = hold[rd_ch % CH_PER_BANK];
+
+            for (pc = 0; pc < CH_PER_BANK; pc = pc + 1) begin : gen_rdy
+                if (pb*CH_PER_BANK + pc < N_CH) begin : gen_live
+                    assign pwr_ready[pb*CH_PER_BANK + pc] = done[pc];
                 end
             end
         end
     endgenerate
 
-    assign rd_pwr    = pwr_hold[rd_ch];
-    assign pwr_ready = pwr_done;
+    wire [31:0] rd_bank = (N_BANK > 1) ? (rd_ch / CH_PER_BANK) : 32'd0;
+    assign rd_pwr = pwr_flat[rd_bank*PWR_W +: PWR_W];
 
     assign tap_valid = ch_valid[tap_ch];
     assign tap_i     = ch_i[tap_ch];
