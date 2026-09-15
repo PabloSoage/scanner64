@@ -36,6 +36,29 @@
 //     etapa 3   desplazamiento y saturacion
 //     etapa 4   integradores de la ranura s, y diezmado
 //
+// POR QUE EL ESTADO SE QUEDA EN FLIP-FLOPS, Y NO ES POR NO HABERLO INTENTADO
+//
+// Son 216 bits por canal, casi la mitad de todo el registro del diseno, asi que
+// merecia la pena probar a sacarlos. Probado y medido, con FOLD=16:
+//
+//                        LUT      FF
+//   registros (esto)    2.593   4.747
+//   con barrido        12.289   4.654     <- peor en todo
+//
+// La inferencia de RAM distribuida necesita un patron simple: una direccion de
+// lectura, una de escritura. La cascada del CIC lee TRES posiciones distintas
+// del array en el mismo ciclo --acc[k] y acc[k-1] de cada etapa-- y con eso
+// Vivado abandona la inferencia. Cambiar el reset paralelo por un barrido solo
+// empeoro las cosas: cada posicion paso a decidir entre limpiada, actualizada o
+// retenida, con DOS fuentes de direccion, y ese decodificador multiplico los
+// LUT por cinco sin sacar un solo registro.
+//
+// Para que pagara habria que pasar la cascada a una etapa por ciclo, lo que
+// deja una lectura y una escritura y si es inferible. Pero multiplica la ronda
+// por CIC_N: cada muestra costaria FOLD*CIC_N ciclos y la aritmetica del
+// plegado pasaria a Fs <= Fclk/(FOLD*3), que se come buena parte del beneficio.
+// No sale a cuenta.
+//
 // EL RESET SI LIMPIA, A DIFERENCIA DE comb_bank
 //
 // comb_bank deja su estado sin resetear a proposito, para que viva en LUTRAM en
