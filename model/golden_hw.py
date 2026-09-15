@@ -25,7 +25,7 @@ El estado sucio de los peines se va en tres rondas, asi que midiendo hacia la
 salida ~3000 lo que hay dentro del filtro lo pusieron las muestras de esta
 misma tirada, las mismas que ve el modelo.
 
-    python golden_hw.py N0 I0 Q0 N1 I1 Q1 N2 I2 Q2 N3 I3 Q3
+    python3 golden_hw.py N0 I0 Q0 N1 I1 Q1 N2 I2 Q2 N3 I3 Q3
 """
 
 import sys

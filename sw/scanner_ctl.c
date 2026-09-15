@@ -602,7 +602,8 @@ static int cmd_golden(void)
         printf("   %3d   %6.1f MHz   %9u   %8d   %8d\n",
                k, freqs[k] / 1e6, cnt[k], ti[k], tq[k]);
 
-    printf("\n  Contrastalo con el modelo:\n\n    python golden_hw.py");
+    printf("\n  Contrastalo con el modelo, aqui mismo en la placa:\n"
+           "\n    python3 ~/scanner64/model/golden_hw.py");
     for (k = 0; k < 4; k++)
         printf(" %u %d %d", cnt[k], ti[k], tq[k]);
     printf("\n\n");
