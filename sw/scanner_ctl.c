@@ -610,6 +610,73 @@ static int cmd_golden(void)
     return 0;
 }
 
+/* Cuanto da de si leer por AXI-Lite, medido en vez de estimado.
+ *
+ * De esto depende una decision cara: la variante (b) de METODOLOGIA.md --la
+ * FPGA genera y el ARM consume-- necesita mover las muestras de la PL al PS. Si
+ * AXI-Lite da de sobra, basta una FIFO y un puñado de registros, que ya casi
+ * estan. Si no llega, hace falta DMA por un puerto HP: block design nuevo,
+ * bitstream nuevo y gestion de buffers.
+ *
+ * La medida es el tiempo de una lectura de 32 bits contra memoria de
+ * dispositivo. Ahi cada lectura es un viaje de ida y vuelta completo por el
+ * interconnect: no hay cache que la absorba ni pipeline que la solape, que es
+ * justo lo que la hace cara y lo que hay que cuantificar.
+ *
+ * Se mide tambien la lectura de palabras CONSECUTIVAS. Si el compilador o el
+ * bus consiguen solaparlas, la tasa util sube; si no, es que cada lectura
+ * paga su latencia entera. */
+static void cmd_rate(void)
+{
+    const int N = 200000;
+    volatile uint32_t sink = 0;
+    double t0, dt;
+    int i;
+
+    printf("\nLectura por AXI-Lite desde el espacio de usuario\n\n");
+
+    /* 1) El mismo registro, una y otra vez. */
+    t0 = now_s();
+    for (i = 0; i < N; i++) sink += rd(R_ID);
+    dt = now_s() - t0;
+    double una = N / dt;
+    printf("  un registro, %d lecturas : %6.0f ns cada una, %5.2f M lecturas/s\n",
+           N, dt / N * 1e9, una / 1e6);
+
+    /* 2) Palabras consecutivas, por si se solapan. */
+    t0 = now_s();
+    for (i = 0; i < N; i += 4) {
+        sink += rd(R_SMP_LO);
+        sink += rd(R_SMP_HI);
+        sink += rd(R_OUT_CNT);
+        sink += rd(R_NCH);
+    }
+    dt = now_s() - t0;
+    double seg = N / dt;
+    printf("  4 consecutivas          : %6.0f ns cada una, %5.2f M lecturas/s\n",
+           dt / N * 1e9, seg / 1e6);
+
+    double mejor = una > seg ? una : seg;
+    (void)sink;
+
+    /* Con muestras de 16 bits caben dos por palabra de 32. */
+    double msps = mejor * 2.0 / 1e6;
+    printf("\n  Empaquetando 2 muestras de 16 bits por palabra:\n");
+    printf("    techo de transporte   : %.2f MSPS\n", msps);
+
+    /* Y lo que el A53 puede consumir: 157,7 M canal-muestras/s con 4 hilos,
+     * repartidas entre los canales que haya. */
+    printf("\n  Contra lo que los cuatro A53 pueden procesar (157,7 M cm/s):\n");
+    printf("    canales   necesita    transporte    veredicto\n");
+    for (i = 4; i <= 64; i *= 2) {
+        double necesita = 157.7e6 / i / 1e6;
+        printf("    %5d    %6.2f MSPS  %6.2f MSPS   %s\n",
+               i, necesita, msps,
+               msps >= necesita ? "FIFO basta" : "hace falta DMA");
+    }
+    printf("\n");
+}
+
 int main(int argc, char **argv)
 {
     unsigned long base = 0xA0000000UL;
@@ -620,7 +687,7 @@ int main(int argc, char **argv)
     }
     if (a >= argc) {
         fprintf(stderr,
-            "uso: %s [--base 0xA0000000] {info|raw|probe|map|bus [fix]|test [N]|golden|run N|dump}\n", argv[0]);
+            "uso: %s [--base 0xA0000000] {info|raw|probe|map|bus [fix]|test [N]|golden|rate|run N|dump}\n", argv[0]);
         return 2;
     }
     ensure_bus32();
@@ -630,6 +697,7 @@ int main(int argc, char **argv)
     if (!strcmp(argv[a], "info")) { cmd_info(); return 0; }
     if (!strcmp(argv[a], "dump")) { cmd_dump(); return 0; }
     if (!strcmp(argv[a], "golden")) return cmd_golden();
+    if (!strcmp(argv[a], "rate"))   { cmd_rate();   return 0; }
     if (!strcmp(argv[a], "raw"))   { cmd_raw();   return 0; }
     if (!strcmp(argv[a], "probe")) { cmd_probe(); return 0; }
     if (!strcmp(argv[a], "map"))   { cmd_map();   return 0; }
