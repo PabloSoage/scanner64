@@ -1,16 +1,16 @@
 // ---------------------------------------------------------------------------
-// sig_source.v — Generador de senal de prueba dentro de la PL.
+// sig_source.v - Test signal generator inside the PL.
 //
-// Sin ADC no hay antena, asi que la "antena" la generamos aqui: dos tonos
-// configurables mas ruido pseudoaleatorio. Sirve para:
+// With no ADC there is no antenna, so we generate the "antenna" here: two
+// configurable tones plus pseudo-random noise. It is good for:
 //
-//   · validar el escaner sin ningun hardware externo;
-//   · alimentarlo a la MAXIMA tasa que aguante el reloj de la PL, que es
-//     precisamente lo que ninguna CPU puede sostener;
-//   · medir el rechazo fuera de banda con dos tonos de amplitud conocida.
+//   . validating the scanner with no external hardware at all;
+//   . feeding it at the MAXIMUM rate the PL clock can take, which is exactly
+//     what no CPU can sustain;
+//   . measuring out-of-band rejection with two tones of known amplitude.
 //
-// El ruido sale de un LFSR de 32 bits (polinomio x^32+x^22+x^2+x+1). No es
-// ruido gaussiano, pero para comprobar suelo de ruido y rango dinamico sobra.
+// The noise comes from a 32-bit LFSR (polynomial x^32+x^22+x^2+x+1). It is not
+// Gaussian noise, but for checking noise floor and dynamic range it is plenty.
 // ---------------------------------------------------------------------------
 
 `default_nettype none
@@ -26,18 +26,18 @@ module sig_source #(
     input  wire                      rst_n,
     input  wire                      en,
 
-    input  wire [PHASE_W-1:0]        ftw_a,      // tono A
-    input  wire [PHASE_W-1:0]        ftw_b,      // tono B
-    input  wire [3:0]                shift_a,    // atenuacion: amplitud >> shift
+    input  wire [PHASE_W-1:0]        ftw_a,      // tone A
+    input  wire [PHASE_W-1:0]        ftw_b,      // tone B
+    input  wire [3:0]                shift_a,    // attenuation: amplitude >> shift
     input  wire [3:0]                shift_b,
-    input  wire [3:0]                shift_n,    // nivel de ruido
+    input  wire [3:0]                shift_n,    // noise level
     input  wire                      noise_en,
 
     output reg                       out_valid,
     output reg  signed [OUT_W-1:0]   out_data
 );
 
-    // ---- Dos NCO -----------------------------------------------------------
+    // ---- Two NCOs ----------------------------------------------------------
     wire signed [LUT_W-1:0] cos_a, sin_a, cos_b, sin_b;
 
     nco #(.PHASE_W(PHASE_W), .LUT_ADDR_W(LUT_ADDR_W),
@@ -52,19 +52,19 @@ module sig_source #(
         .cos_o(cos_b), .sin_o(sin_b)
     );
 
-    // ---- LFSR de ruido -----------------------------------------------------
+    // ---- Noise LFSR --------------------------------------------------------
     reg [31:0] lfsr;
     wire fb = lfsr[31] ^ lfsr[21] ^ lfsr[1] ^ lfsr[0];
 
     always @(posedge clk) begin
-        if (!rst_n)      lfsr <= 32'hACE1_2345;   // cualquier semilla no nula
+        if (!rst_n)      lfsr <= 32'hACE1_2345;   // any non-zero seed will do
         else if (en)     lfsr <= {lfsr[30:0], fb};
     end
 
     wire signed [LUT_W-1:0] noise = noise_en ? $signed(lfsr[LUT_W-1:0])
                                              : {LUT_W{1'b0}};
 
-    // ---- Suma con saturacion ----------------------------------------------
+    // ---- Sum with saturation -----------------------------------------------
     localparam signed [OUT_W-1:0] OUT_MAX =  (1 <<< (OUT_W-1)) - 1;
     localparam signed [OUT_W-1:0] OUT_MIN = -(1 <<< (OUT_W-1));
 

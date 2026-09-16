@@ -1,15 +1,16 @@
 // ---------------------------------------------------------------------------
-// tb_scanner_axi.v — El banco de pruebas del interfaz AXI4-Lite.
+// tb_scanner_axi.v - The AXI4-Lite interface testbench.
 //
-// Existe por un motivo concreto: en la KV260, leyendo por /dev/mem, SOLO
-// respondian los offsets multiplos de 16 (0x00 ID, 0x10 SRC_SH, 0x20 RD_CH,
-// 0x30 SMP_LO, 0x40 TAP_I) y el resto devolvia cero. Las escrituras si
-// llegaban --el escaner arrancaba-- asi que el fallo estaba en la lectura.
+// It exists for one specific reason: on the KV260, reading through /dev/mem,
+// ONLY the offsets that were multiples of 16 answered (0x00 ID, 0x10 SRC_SH,
+// 0x20 RD_CH, 0x30 SMP_LO, 0x40 TAP_I) and the rest returned zero. Writes did
+// get through -- the scanner started -- so the fault was on the read side.
 //
-// El block design estaba bien (AXI4LITE, DATA_WIDTH 32, ADDR_WIDTH 7), asi que
-// la pregunta es si el fallo lo reproduce el propio RTL. Este testbench hace de
-// maestro AXI4-Lite y lee los 20 registros. Si aqui salen todos bien, el
-// problema esta fuera del modulo; si sale el mismo patron, esta dentro.
+// The block design was fine (AXI4LITE, DATA_WIDTH 32, ADDR_WIDTH 7), so the
+// question is whether the RTL itself reproduces the fault. This testbench acts
+// as an AXI4-Lite master and reads all 20 registers. If they all come out
+// right here, the problem is outside the module; if the same pattern shows up,
+// it is inside.
 //
 //     xvlog *.v && xelab -debug typical tb_scanner_axi -s a && xsim a -R
 // ---------------------------------------------------------------------------
@@ -57,9 +58,9 @@ module tb_scanner_axi;
         .s_axi_rdata (rdata), .s_axi_rresp (rresp),
         .s_axi_rvalid (rvalid), .s_axi_rready (rready));
 
-    // ---- Maestro AXI4-Lite -------------------------------------------------
-    // Lo importante: arvalid se mantiene hasta que el esclavo da arready, que
-    // es lo que exige el protocolo y lo que hace el interconnect de verdad.
+    // ---- AXI4-Lite master --------------------------------------------------
+    // The important part: arvalid is held until the slave asserts arready,
+    // which is what the protocol demands and what the real interconnect does.
 
     task axi_read(input [31:0] a, output reg [31:0] d);
     begin
@@ -120,91 +121,91 @@ module tb_scanner_axi;
     end
     endtask
 
-    // ---- La prueba ---------------------------------------------------------
-    integer i, errores;
-    reg [31:0] v, esperado;
+    // ---- The test ----------------------------------------------------------
+    integer i, errors;
+    reg [31:0] v, expected;
     reg [8*12-1:0] nm;
 
-    function [8*12-1:0] nombre(input integer k);
+    function [8*12-1:0] reg_name(input integer k);
         case (k)
-            0: nombre = "ID";        1: nombre = "CTRL";
-            2: nombre = "SRC_FTWA";  3: nombre = "SRC_FTWB";
-            4: nombre = "SRC_SH";    5: nombre = "CFG_CH";
-            6: nombre = "CFG_FTW";   7: nombre = "PWR_LEN";
-            8: nombre = "RD_CH";     9: nombre = "PWR_LO";
-           10: nombre = "PWR_HI";   11: nombre = "READY";
-           12: nombre = "SMP_LO";   13: nombre = "SMP_HI";
-           14: nombre = "OUT_CNT";  15: nombre = "NCH";
-           16: nombre = "TAP_I";    17: nombre = "TAP_Q";
-           18: nombre = "TAP_CNT";  default: nombre = "-";
+            0: reg_name = "ID";        1: reg_name = "CTRL";
+            2: reg_name = "SRC_FTWA";  3: reg_name = "SRC_FTWB";
+            4: reg_name = "SRC_SH";    5: reg_name = "CFG_CH";
+            6: reg_name = "CFG_FTW";   7: reg_name = "PWR_LEN";
+            8: reg_name = "RD_CH";     9: reg_name = "PWR_LO";
+           10: reg_name = "PWR_HI";   11: reg_name = "READY";
+           12: reg_name = "SMP_LO";   13: reg_name = "SMP_HI";
+           14: reg_name = "OUT_CNT";  15: reg_name = "NCH";
+           16: reg_name = "TAP_I";    17: reg_name = "TAP_Q";
+           18: reg_name = "TAP_CNT";  default: reg_name = "-";
         endcase
     endfunction
 
     initial begin
         awaddr = 0; awvalid = 0; wdata = 0; wstrb = 0; wvalid = 0;
         bready = 0; araddr = 0; arvalid = 0; rready = 0;
-        errores = 0;
+        errors = 0;
 
         repeat (10) @(posedge clk);
         rst_n = 1'b1;
         repeat (5) @(posedge clk);
 
         $display("");
-        $display("Lectura de los 19 registros tras el reset");
-        $display("  off  idx  nombre       leido        esperado");
+        $display("Reading all 19 registers after reset");
+        $display("  off  idx  name         read         expected");
         for (i = 0; i < 19; i = i + 1) begin
             axi_read(i * 4, v);
             case (i)
-                0:  esperado = MAGIC;
-                2:  esperado = 32'h1999_999A;
-                3:  esperado = 32'h2666_6666;
-                4:  esperado = 32'h0000_0022;
-                7:  esperado = 32'd1024;
-                15: esperado = N_CH;
-                default: esperado = 32'd0;      // el resto vale cero parado
+                0:  expected = MAGIC;
+                2:  expected = 32'h1999_999A;
+                3:  expected = 32'h2666_6666;
+                4:  expected = 32'h0000_0022;
+                7:  expected = 32'd1024;
+                15: expected = N_CH;
+                default: expected = 32'd0;      // the rest read zero while stopped
             endcase
-            nm = nombre(i);
-            if (v !== esperado) begin
-                $display("  0x%02h  %2d  %-11s 0x%08h   0x%08h   <-- MAL",
-                         i*4, i, nm, v, esperado);
-                errores = errores + 1;
+            nm = reg_name(i);
+            if (v !== expected) begin
+                $display("  0x%02h  %2d  %-11s 0x%08h   0x%08h   <-- WRONG",
+                         i*4, i, nm, v, expected);
+                errors = errors + 1;
             end else begin
                 $display("  0x%02h  %2d  %-11s 0x%08h   0x%08h",
-                         i*4, i, nm, v, esperado);
+                         i*4, i, nm, v, expected);
             end
         end
 
         $display("");
-        $display("Escribir y releer cada registro RW");
+        $display("Write and read back every RW register");
         for (i = 2; i <= 8; i = i + 1) begin
             axi_write(i * 4, 32'hC0DE0000 | (i << 4) | 8'h0A);
             axi_read (i * 4, v);
-            esperado = 32'hC0DE0000 | (i << 4) | 8'h0A;
-            if (i == 4) esperado = {20'd0, esperado[11:0]};   // SRC_SH: 12 bits
-            nm = nombre(i);
-            if (v !== esperado) begin
-                $display("  0x%02h  %-11s escrito 0x%08h  leido 0x%08h  <-- MAL",
+            expected = 32'hC0DE0000 | (i << 4) | 8'h0A;
+            if (i == 4) expected = {20'd0, expected[11:0]};   // SRC_SH: 12 bits
+            nm = reg_name(i);
+            if (v !== expected) begin
+                $display("  0x%02h  %-11s wrote 0x%08h  read 0x%08h  <-- WRONG",
                          i*4, nm, 32'hC0DE0000 | (i << 4) | 8'h0A, v);
-                errores = errores + 1;
+                errors = errors + 1;
             end else begin
-                $display("  0x%02h  %-11s escrito y releido 0x%08h  OK",
+                $display("  0x%02h  %-11s written and read back 0x%08h  OK",
                          i*4, nm, v);
             end
         end
 
         $display("");
-        if (errores == 0)
-            $display("RESULTADO: PASA. El RTL decodifica bien los 19 registros.");
+        if (errors == 0)
+            $display("RESULT: PASS. The RTL decodes all 19 registers correctly.");
         else
-            $display("RESULTADO: FALLA, %0d discrepancias. El fallo esta en el RTL.",
-                     errores);
+            $display("RESULT: FAIL, %0d mismatches. The fault is in the RTL.",
+                     errors);
         $display("");
         $finish;
     end
 
     initial begin
         #200000;
-        $display("TIMEOUT: el maestro se quedo colgado esperando un handshake.");
+        $display("TIMEOUT: the master hung waiting for a handshake.");
         $finish;
     end
 

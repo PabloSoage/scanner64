@@ -1,91 +1,92 @@
 // ---------------------------------------------------------------------------
-// comb_bank.v — Peines del CIC, multiplexados entre varias unidades.
+// comb_bank.v - CIC combs, multiplexed between several units.
 //
-// POR QUE EXISTE ESTE MODULO
+// WHY THIS MODULE EXISTS
 //
-// Los integradores del CIC corren a la tasa de entrada, pero los peines corren
-// a la tasa DIEZMADA: con R=64 trabajan un ciclo de cada 64 y estan parados el
-// 98 % del tiempo. Replicarlos por canal, como hace cic_decim, desperdicia
-// 216 LUT y 360 FF por canal medidos sobre la KV260.
+// The CIC integrators run at the input rate, but the combs run at the
+// DECIMATED rate: with R=64 they work one cycle in 64 and sit idle 98 % of the
+// time. Replicating them per channel, the way cic_decim does, wastes 216 LUTs
+// and 360 FFs per channel, measured on the KV260.
 //
-// Aqui hay UN solo juego de peines que atiende N_UNIT unidades por turnos. Una
-// "unidad" es una cadena I o Q, asi que un canal consume dos.
+// Here there is ONE set of combs serving N_UNIT units in turns. A "unit" is an
+// I or Q chain, so one channel consumes two.
 //
-// COMO FUNCIONA
+// HOW IT WORKS
 //
-// Todos los canales diezman en el mismo ciclo, porque comparten el flujo de
-// entrada y el contador. Asi que en el pulso de `start` se capturan de golpe
-// las N_UNIT muestras y luego se procesan de una en una, en los N_UNIT ciclos
-// siguientes. Como el diezmado se repite cada R ciclos, hace falta
-// N_UNIT + 1 < R para que la ronda termine antes de la siguiente: con R=64
-// el valor seguro por defecto es 32 unidades, o sea 16 canales por banco.
+// Every channel decimates on the same cycle, because they share the input
+// stream and the counter. So on the `start` pulse the N_UNIT samples are
+// captured all at once and then processed one at a time, over the following
+// N_UNIT cycles. Since decimation repeats every R cycles, you need
+// N_UNIT + 1 < R for the round to finish before the next one: with R=64 the
+// safe default is 32 units, that is, 16 channels per bank.
 //
-// El estado de cada unidad vive en un array indexado por turno. MEDIDO sobre
-// la KV260, N_UNIT=32: 2034 LUT y 7001 FF por banco, o sea 127 LUT y 438 FF
-// por canal, frente a los 216 LUT y 360 FF por canal que costaban los peines
-// replicados. El grueso de esos 2034 LUT NO son los sumadores (4 restas de
-// 36 bits, ~144 LUT) sino los multiplexores 32:1 que leen el array por indice.
+// Each unit's state lives in an array indexed by turn. MEASURED on the KV260,
+// N_UNIT=32: 2034 LUTs and 7001 FFs per bank, that is 127 LUTs and 438 FFs per
+// channel, against the 216 LUTs and 360 FFs per channel the replicated combs
+// cost. The bulk of those 2034 LUTs are NOT the adders (4 subtractions of
+// 36 bits, ~144 LUTs) but the 32:1 multiplexers that read the array by index.
 //
-// Por eso no se fuerza el estado a LUTRAM: la memoria distribuida sale del
-// mismo presupuesto de LUT y el ahorro seria negativo. Dejarlo en flip-flops,
-// que sobran (234 k en el chip), es lo correcto aqui.
+// That is why the state is not forced into LUTRAM: distributed memory comes
+// out of the same LUT budget and the saving would be negative. Leaving it in
+// flip-flops, which are plentiful (234 k on the chip), is the right call here.
 //
-// LA RONDA VA EN DOS ETAPAS, y esto no es un capricho.
+// THE ROUND RUNS IN TWO STAGES, and that is not a whim.
 //
-// La primera version hacia leer-calcular-escribir en un solo ciclo, y el
-// resultado fue un camino critico que iba del contador de turno hasta los DSP
-// del medidor de potencia, con el 84 % del retardo en CABLEADO: 5.148 ns de
-// rutado contra 0.951 ns de logica. Los multiplexores 32:1 obligan a la senal
-// a cruzar medio chip. Post-rutado el diseno se quedaba en 144 MHz.
+// The first version did read-compute-write in a single cycle, and the result
+// was a critical path running from the turn counter all the way to the power
+// meter DSPs, with 84 % of the delay in WIRING: 5.148 ns of routing against
+// 0.951 ns of logic. The 32:1 multiplexers force the signal to cross half the
+// chip. Post-route, the design topped out at 144 MHz.
 //
-// Partiendo la ronda en dos, la lectura del array queda aislada en su propia
-// etapa y el mux ya no comparte ciclo con la resta ni con lo que venga detras:
+// Splitting the round in two isolates the array read into its own stage, and
+// the mux no longer shares a cycle with the subtraction or with whatever comes
+// after it:
 //
-//     etapa A   lee el estado de la unidad u y lo registra
-//     etapa B   resta, escribe el estado nuevo y saca la muestra
+//     stage A   reads unit u's state and registers it
+//     stage B   subtracts, writes the new state and emits the sample
 //
-// No hay riesgo de colision: en cualquier ciclo la etapa A lee la unidad u y
-// la B escribe la u-1, que son distintas. Cada unidad se toca una vez por
-// ronda. El coste es un ciclo mas de latencia y una ronda de N_UNIT+1 ciclos
-// en vez de N_UNIT, asi que ahora hace falta N_UNIT+1 < R.
+// There is no collision hazard: on any cycle stage A reads unit u and stage B
+// writes u-1, which are different. Each unit is touched once per round. The
+// cost is one more cycle of latency and a round of N_UNIT+1 cycles instead of
+// N_UNIT, so now you need N_UNIT+1 < R.
 //
-// La siguiente via, si hiciera falta bajar el area, es poner el estado en BRAM
-// y pasar a tres etapas. No esta hecho.
+// The next avenue, should the area ever need to come down, is to put the state
+// in BRAM and go to three stages. Not done.
 //
-// EQUIVALENCIA CON cic_decim
+// EQUIVALENCE WITH cic_decim
 //
-// Con la entrada d de la unidad u, y su estado cv[] / cp[], una ronda hace:
+// With input d for unit u, and its state cv[] / cp[], one round does:
 //
-//     prev[0]   = d                 prev[j] = cv[j-1]  para j >= 1
+//     prev[0]   = d                 prev[j] = cv[j-1]  for j >= 1
 //     cv_new[j] = prev[j] - cp[j]   cp_new[j] = prev[j]
-//     salida    = cv_new[N-1]
+//     output    = cv_new[N-1]
 //
-// que es exactamente lo que hace el bloque de peines de cic_decim, solo que
-// el valor "previo" viene de memoria en lugar de un registro. La ultima etapa
-// no se guarda: es la salida.
+// which is exactly what the comb block of cic_decim does, except the
+// "previous" value comes from memory instead of a register. The last stage is
+// not stored: it is the output.
 //
-// Lo que SI cambia es CUANDO sale cada unidad: la unidad u sale u ciclos
-// despues del diezmado, no todas a la vez. Los valores son identicos bit a
-// bit; solo se reordenan en el tiempo.
+// What DOES change is WHEN each unit comes out: unit u comes out u cycles
+// after the decimation, not all of them at once. The values are bit-identical;
+// they are only reordered in time.
 //
-// Requiere N >= 2 y N_UNIT + 1 < R.
+// Requires N >= 2 and N_UNIT + 1 < R.
 // ---------------------------------------------------------------------------
 
 `default_nettype none
 
 module comb_bank #(
-    parameter integer N_UNIT = 32,    // unidades atendidas (2 por canal)
-    parameter integer N      = 3,     // etapas de peine
+    parameter integer N_UNIT = 32,    // units served (2 per channel)
+    parameter integer N      = 3,     // comb stages
     parameter integer ACC_W  = 36
 ) (
     input  wire                          clk,
     input  wire                          rst_n,
 
-    // Pulso de diezmado: hay N_UNIT muestras nuevas en din_flat.
+    // Decimation pulse: there are N_UNIT new samples in din_flat.
     input  wire                          start,
     input  wire [N_UNIT*ACC_W-1:0]       din_flat,
 
-    // Una salida por ciclo mientras dura la ronda.
+    // One output per cycle for as long as the round lasts.
     output reg                           out_valid,
     output reg  [$clog2(N_UNIT)-1:0]     out_unit,
     output reg  signed [ACC_W-1:0]       out_data
@@ -93,26 +94,26 @@ module comb_bank #(
 
     localparam integer UW = $clog2(N_UNIT);
 
-    // ---- Estado por unidad -------------------------------------------------
-    // Lectura asincrona a proposito: asi la ronda cabe en un ciclo por unidad,
-    // sin pipeline de memoria. El precio son los multiplexores de lectura.
+    // ---- Per-unit state ----------------------------------------------------
+    // Asynchronous read on purpose: that way the round fits in one cycle per
+    // unit, with no memory pipeline. The price is the read multiplexers.
     reg signed [ACC_W-1:0] buf_in [0:N_UNIT-1];
-    reg signed [ACC_W-1:0] cv     [0:N-2][0:N_UNIT-1];  // etapas 0..N-2
-    reg signed [ACC_W-1:0] cp     [0:N-1][0:N_UNIT-1];  // etapas 0..N-1
+    reg signed [ACC_W-1:0] cv     [0:N-2][0:N_UNIT-1];  // stages 0..N-2
+    reg signed [ACC_W-1:0] cp     [0:N-1][0:N_UNIT-1];  // stages 0..N-1
 
     reg          busy;
     reg [UW-1:0] u;
 
-    // El estado arranca a cero por `initial`, NO por un bucle de reset. Es
-    // deliberado: un reset que barre todo el array obliga a Vivado a poner el
-    // estado en flip-flops (medido: 7001 FF) en vez de en LUTRAM distribuida.
-    // Con `initial` la inicializacion viaja en el bitstream, que es como se
-    // inicializa la memoria distribuida en una FPGA de verdad.
+    // The state starts at zero through `initial`, NOT through a reset loop.
+    // That is deliberate: a reset that sweeps the whole array forces Vivado to
+    // put the state in flip-flops (measured: 7001 FFs) instead of distributed
+    // LUTRAM. With `initial` the initialisation travels in the bitstream,
+    // which is how distributed memory gets initialised on a real FPGA.
     //
-    // Consecuencia a tener presente: un reset en caliente NO limpia el estado
-    // de los peines. Tras un rst_n el filtro arrastra su estado anterior
-    // durante unas cuantas rondas. Si eso importa en tu sistema, vacia el
-    // banco metiendo N rondas de ceros antes de fiarte de la salida.
+    // A consequence to keep in mind: a warm reset does NOT clear the comb
+    // state. After an rst_n the filter drags its previous state along for a
+    // few rounds. If that matters in your system, flush the bank by pushing N
+    // rounds of zeros through it before trusting the output.
     integer ii, jj;
     initial begin
         for (ii = 0; ii < N_UNIT; ii = ii + 1) begin
@@ -122,10 +123,11 @@ module comb_bank #(
         end
     end
 
-    // ---- Etapa A: lectura del estado de la unidad u -----------------------
-    // prev[j] es el valor que la etapa j consume: la entrada para la primera,
-    // y el valor PREVIO de la etapa anterior para el resto.
-    // Estos son los multiplexores caros, y ahora tienen el ciclo para ellos.
+    // ---- Stage A: read unit u's state --------------------------------------
+    // prev[j] is the value stage j consumes: the input for the first one, and
+    // the PREVIOUS value of the stage before it for the rest.
+    // These are the expensive multiplexers, and now they get the cycle to
+    // themselves.
     wire signed [ACC_W-1:0] prev_c [0:N-1];
     wire signed [ACC_W-1:0] cp_c   [0:N-1];
 
@@ -145,7 +147,7 @@ module comb_bank #(
     reg signed [ACC_W-1:0] a_prev [0:N-1];
     reg signed [ACC_W-1:0] a_cp   [0:N-1];
 
-    // ---- Etapa B: la resta, con los operandos ya registrados --------------
+    // ---- Stage B: the subtraction, operands already registered -------------
     wire signed [ACC_W-1:0] cv_nx [0:N-1];
     generate
         for (gj = 0; gj < N; gj = gj + 1) begin : gen_cvnx
@@ -167,7 +169,7 @@ module comb_bank #(
             a_valid   <= 1'b0;
             out_valid <= 1'b0;
 
-            // --- Etapa A ---------------------------------------------------
+            // --- Stage A ---------------------------------------------------
             if (start) begin
                 for (k = 0; k < N_UNIT; k = k + 1)
                     buf_in[k] <= din_flat[k*ACC_W +: ACC_W];
@@ -189,8 +191,8 @@ module comb_bank #(
                 end
             end
 
-            // --- Etapa B ---------------------------------------------------
-            // Escribe la unidad a_unit, que es la anterior a la que lee A.
+            // --- Stage B ---------------------------------------------------
+            // Writes unit a_unit, the one before whatever A is reading.
             if (a_valid) begin
                 for (j = 0; j < N-1; j = j + 1) cv[j][a_unit] <= cv_nx[j];
                 for (j = 0; j < N;   j = j + 1) cp[j][a_unit] <= a_prev[j];

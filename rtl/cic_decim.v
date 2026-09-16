@@ -1,43 +1,44 @@
 // ---------------------------------------------------------------------------
-// cic_decim.v — Decimador CIC (Cascaded Integrator-Comb).
+// cic_decim.v - CIC (Cascaded Integrator-Comb) decimator.
 //
-// N etapas integradoras a la tasa alta, diezmado por R, N peines a la tasa
-// baja. No usa NI UN multiplicador: solo sumadores y registros. Eso es lo que
-// permite meter decenas de canales en la PL.
+// N integrator stages at the high rate, decimation by R, N combs at the low
+// rate. It uses NOT ONE multiplier: only adders and registers. That is what
+// makes it possible to fit dozens of channels in the PL.
 //
-// Desde la separacion en dos piezas, este modulo es solo el pegamento:
+// Since the split into two pieces, this module is just the glue:
 //
-//     cic_integ   los integradores, a la tasa de entrada. Uno por unidad,
-//                 obligatoriamente: procesan una muestra por ciclo.
-//     comb_chain  los peines, a la tasa diezmada. Trabajan 1 ciclo de cada R.
+//     cic_integ   the integrators, at the input rate. One per unit, and there
+//                 is no choice about it: they process one sample per cycle.
+//     comb_chain  the combs, at the decimated rate. They work 1 cycle in R.
 //
-// Esa asimetria es la que explota comb_bank, que sustituye N comb_chain por un
-// solo juego compartido por turnos. Ver el README.
+// That asymmetry is what comb_bank exploits, replacing N comb_chain with a
+// single set shared in turns. See the README.
 //
-// Las dos trampas del CIC estan documentadas donde toca:
-//   1. el desbordamiento envolvente intencionado, en cic_integ
-//   2. las cascadas registradas y no combinatorias, en comb_chain
+// The two CIC traps are documented where they belong:
+//   1. the intentional wraparound overflow, in cic_integ
+//   2. the registered, non-combinational cascades, in comb_chain
 //
-// Equivalente ciclo a ciclo a CICDecimator de model/ddc_model.py.
-// Requiere N >= 2.
+// Cycle-for-cycle equivalent to CICDecimator in model/ddc_model.py.
+// Requires N >= 2.
 // ---------------------------------------------------------------------------
 
 `default_nettype none
 
-// Mapeo de la aritmetica: por defecto los sumadores van a CLB. Sintetizando
-// con -verilog_define CIC_USE_DSP=1 se mandan a los DSP48, que llevan un
-// acumulador de 48 bits sin usar. Cuesta 3 DSP por CIC y ahorra 145 LUT.
+// Arithmetic mapping: by default the adders go to CLBs. Synthesising with
+// -verilog_define CIC_USE_DSP=1 sends them to the DSP48s, which carry an
+// unused 48-bit accumulator. It costs 3 DSPs per CIC and saves 145 LUTs.
 //
-// No es una mejora, es un INTERCAMBIO: elige segun que recurso te sobre en tu
-// diseno. Los numeros medidos estan en el README, seccion "Exprimirla de
-// verdad". No cambia la funcion ni un bit, solo donde se implementa.
+// This is not an improvement, it is a TRADE: choose according to which
+// resource you have to spare in your design. The measured numbers are in the
+// README, section "Pushing it properly". It does not change the function by a
+// single bit, only where it is implemented.
 `ifdef CIC_USE_DSP
 (* use_dsp = "logic" *)
 `endif
 module cic_decim #(
     parameter integer IN_W  = 18,
-    parameter integer N     = 3,      // etapas
-    parameter integer R     = 64,     // factor de diezmado
+    parameter integer N     = 3,      // stages
+    parameter integer R     = 64,     // decimation factor
     parameter integer ACC_W = 36      // = IN_W + N*log2(R*M)
 ) (
     input  wire                       clk,
@@ -50,7 +51,7 @@ module cic_decim #(
 
     initial begin
         if (N < 2) begin
-            $display("cic_decim: N debe ser >= 2");
+            $display("cic_decim: N must be >= 2");
             $finish;
         end
     end

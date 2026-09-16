@@ -1,19 +1,19 @@
 // ---------------------------------------------------------------------------
-// tb_comb_bank.v — Equivalencia entre los peines replicados y los compartidos.
+// tb_comb_bank.v - Equivalence between replicated and shared combs.
 //
-// No compara contra vectores dorados sino contra el propio RTL ya verificado:
-// instancia N_UNIT cic_decim (la referencia, que pasa tb_ddc_channel) y un
-// comb_bank alimentado con los mismos datos, y comprueba que sacan
-// exactamente lo mismo.
+// It does not compare against golden vectors but against the already-verified
+// RTL itself: it instantiates N_UNIT cic_decim (the reference, which passes
+// tb_ddc_channel) and one comb_bank fed with the same data, and checks they
+// produce exactly the same thing.
 //
-// Es la prueba que hay que pasar para que el multiplexado sea legitimo: los
-// valores tienen que ser identicos bit a bit. Lo unico que puede cambiar es
-// CUANDO sale cada unidad.
+// This is the test that has to pass for the multiplexing to be legitimate: the
+// values have to be bit-identical. The only thing allowed to change is WHEN
+// each unit comes out.
 //
-// Cada unidad recibe una secuencia DISTINTA, para que cualquier cruce de
-// estado entre unidades salte a la vista.
+// Each unit gets a DIFFERENT sequence, so that any state crossing between
+// units is immediately obvious.
 //
-// Ejecutar con XSim:
+// Run with XSim:
 //     xvlog -sv -i vectors ../rtl/cic_decim.v ../rtl/comb_bank.v \
 //                          ../tb/tb_comb_bank.v
 //     xelab tb_comb_bank -s tb_cb
@@ -25,14 +25,14 @@
 
 module tb_comb_bank;
 
-    localparam integer N_UNIT = 8;      // unidades a comparar
-    localparam integer IN_W   = 18;     // = MIX_W, la salida del mezclador
+    localparam integer N_UNIT = 8;      // units to compare
+    localparam integer IN_W   = 18;     // = MIX_W, the mixer output
     localparam integer N      = 3;
     localparam integer R      = 64;
     localparam integer ACC_W  = 36;
     localparam integer UW     = $clog2(N_UNIT);
     localparam integer N_STIM = 3072;
-    localparam integer SETTLE = 2;      // rondas iniciales que se ignoran
+    localparam integer SETTLE = 2;      // initial rounds that get ignored
 
     reg clk = 1'b0;
     reg rst_n = 1'b0;
@@ -40,7 +40,7 @@ module tb_comb_bank;
 
     reg signed [IN_W-1:0] stim [0:N_STIM-1];
 
-    // ---- Referencia: N_UNIT cic_decim independientes -----------------------
+    // ---- Reference: N_UNIT independent cic_decim ---------------------------
     reg                     in_valid = 1'b0;
     reg signed [IN_W-1:0]   in_data [0:N_UNIT-1];
 
@@ -58,8 +58,8 @@ module tb_comb_bank;
                 .in_valid (in_valid), .in_data (in_data[g]),
                 .out_valid (ref_valid[g]), .out_data (ref_data[g])
             );
-            // El valor que el cic entrega a sus peines. Es lo que el banco
-            // compartido tiene que recibir.
+            // The value the cic hands to its combs. That is what the shared
+            // bank has to receive.
             assign ref_ilast[g] = gen_ref[g].u_cic.tap;
             assign din_flat[g*ACC_W +: ACC_W] = ref_ilast[g];
         end
@@ -67,7 +67,7 @@ module tb_comb_bank;
 
     wire start = gen_ref[0].u_cic.dec_now;
 
-    // ---- Unidad bajo prueba: un solo juego de peines -----------------------
+    // ---- Unit under test: a single set of combs ----------------------------
     wire                     bank_valid;
     wire [UW-1:0]            bank_unit;
     wire signed [ACC_W-1:0]  bank_data;
@@ -78,7 +78,7 @@ module tb_comb_bank;
         .out_valid (bank_valid), .out_unit (bank_unit), .out_data (bank_data)
     );
 
-    // ---- Captura de la referencia ------------------------------------------
+    // ---- Capturing the reference -------------------------------------------
     reg signed [ACC_W-1:0] ref_hold [0:N_UNIT-1];
     reg [31:0]             ref_round [0:N_UNIT-1];
     reg [31:0]             round = 32'd0;
@@ -101,7 +101,7 @@ module tb_comb_bank;
         end
     end
 
-    // ---- Comparacion, un ciclo despues para que ref_hold ya este puesta ----
+    // ---- Comparison, one cycle later so ref_hold is already in place -------
     reg                     bv_d = 1'b0;
     reg [UW-1:0]            bu_d = {UW{1'b0}};
     reg signed [ACC_W-1:0]  bd_d = {ACC_W{1'b0}};
@@ -123,13 +123,13 @@ module tb_comb_bank;
             if (bd_d !== ref_hold[bu_d]) begin
                 errors = errors + 1;
                 if (errors <= 10)
-                    $display("  unidad %0d ronda %0d: referencia %0d, banco %0d",
+                    $display("  unit %0d round %0d: reference %0d, bank %0d",
                              bu_d, round, ref_hold[bu_d], bd_d);
             end
         end
     end
 
-    // ---- Estimulo: una secuencia distinta por unidad -----------------------
+    // ---- Stimulus: a different sequence per unit ---------------------------
     integer si, k;
     initial begin
         $readmemh("vectors/stim.hex", stim);
@@ -158,18 +158,18 @@ module tb_comb_bank;
             for (c = 1; c < N_UNIT; c = c + 1)
                 if (per_unit[c] < min_per_unit) min_per_unit = per_unit[c];
             $display("");
-            $display("tb_comb_bank   (%0d unidades con un solo juego de peines)", N_UNIT);
-            $display("  rondas de diezmado : %0d", round);
-            $display("  comparadas         : %0d", checked);
-            $display("  por unidad (min)   : %0d", min_per_unit);
-            $display("  discrepancias      : %0d", errors);
+            $display("tb_comb_bank   (%0d units on a single set of combs)", N_UNIT);
+            $display("  decimation rounds : %0d", round);
+            $display("  compared          : %0d", checked);
+            $display("  per unit (min)    : %0d", min_per_unit);
+            $display("  mismatches        : %0d", errors);
             $display("");
             if (min_per_unit < 8)
-                $display("RESULTADO: FALLA — alguna unidad se comparo muy poco (%0d).", min_per_unit);
+                $display("RESULT: FAIL - some unit was barely compared (%0d).", min_per_unit);
             else if (errors == 0)
-                $display("RESULTADO: PASA — los peines compartidos dan lo mismo, bit a bit.");
+                $display("RESULT: PASS - the shared combs give the same thing, bit for bit.");
             else
-                $display("RESULTADO: FALLA — %0d discrepancias", errors);
+                $display("RESULT: FAIL - %0d mismatches", errors);
             $display("");
             $finish;
         end

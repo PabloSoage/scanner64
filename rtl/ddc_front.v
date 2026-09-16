@@ -1,22 +1,22 @@
 // ---------------------------------------------------------------------------
-// ddc_front.v — La parte del canal DDC que corre a la tasa de entrada.
+// ddc_front.v - The part of a DDC channel that runs at the input rate.
 //
-//   x[n] --> [retardo] --> (x) --> integradores I --> tap_i
-//                           ^
-//                        NCO cos/sin
-//                           v
-//            [retardo] --> (x) --> integradores Q --> tap_q
+//   x[n] --> [delay] --> (x) --> I integrators --> tap_i
+//                         ^
+//                      NCO cos/sin
+//                         v
+//            [delay] --> (x) --> Q integrators --> tap_q
 //
-// Es ddc_channel SIN los peines. Existe porque los peines corren a 1/R de esta
-// tasa y conviene compartirlos entre canales (comb_bank), en vez de replicar
-// uno por unidad.
+// This is ddc_channel WITHOUT the combs. It exists because the combs run at
+// 1/R of this rate, and sharing them between channels (comb_bank) beats
+// replicating one per unit.
 //
-// Quien quiera un canal completo y autonomo tiene ddc_channel, que es esto mas
-// dos comb_chain y la normalizacion.
+// If you want a complete, self-contained channel, use ddc_channel, which is
+// this plus two comb_chain and the normalisation.
 //
-// Coste por canal MEDIDO (sintesis OOC, Vivado 2026.1, xck26-sfvc784-2LV-c):
-// 486 LUT, 461 FF, 3 DSP48E2 y media BRAM tile, frente a los 703 LUT y 821 FF
-// del canal con peines propios.
+// MEASURED cost per channel (OOC synthesis, Vivado 2026.1,
+// xck26-sfvc784-2LV-c): 486 LUTs, 461 FFs, 3 DSP48E2 and half a BRAM tile,
+// against the 703 LUTs and 821 FFs of a channel with its own combs.
 // ---------------------------------------------------------------------------
 
 `default_nettype none
@@ -34,11 +34,11 @@ module ddc_front #(
 ) (
     input  wire                      clk,
     input  wire                      rst_n,
-    input  wire [PHASE_W-1:0]        ftw,        // palabra de sintonia
+    input  wire [PHASE_W-1:0]        ftw,        // frequency tuning word
     input  wire                      in_valid,
     input  wire signed [IN_W-1:0]    in_data,
 
-    // Pulso de diezmado y los dos valores que van a los peines.
+    // Decimation pulse and the two values that feed the combs.
     output wire                      dec_now,
     output wire signed [CIC_W-1:0]   tap_i,
     output wire signed [CIC_W-1:0]   tap_q
@@ -55,40 +55,40 @@ module ddc_front #(
         .ftw (ftw), .cos_o (cos_v), .sin_o (sin_v)
     );
 
-    // ---- Retardo de la muestra, para alinearla con la salida del NCO -------
-    // max_fanout obliga a Vivado a REPLICAR este registro en vez de compartir
-    // uno solo entre todos los canales. Todos registran el mismo in_data, asi
-    // que la herramienta los fusiona por su cuenta y deja una senal con fanout
-    // igual a N_CH cruzando el chip hasta los DSP de cada mezclador: medido,
-    // el 66 % del camino critico era rutado por esa causa. Replicado, cada
-    // copia se coloca al lado de su DSP.
+    // ---- Sample delay, to line it up with the NCO output --------------------
+    // max_fanout forces Vivado to REPLICATE this register instead of sharing a
+    // single one between all channels. They all register the same in_data, so
+    // the tool merges them on its own and leaves one signal with a fanout of
+    // N_CH crossing the chip to the DSP of every mixer: measured, 66 % of the
+    // critical path was routing for that reason. Replicated, each copy gets
+    // placed next to its own DSP.
     (* max_fanout = 8 *) reg signed [IN_W-1:0] x_d1;
     (* max_fanout = 8 *) reg                   v_d1;
 
-    // ---- Mezclador complejo, en dos etapas ---------------------------------
-    // El desplazamiento de LUT_W-1 deshace la escala de la LUT (32767 ~ 1.0).
-    // En la saturacion SI hay que saturar: una envolvente genera chasquidos.
+    // ---- Complex mixer, in two stages ---------------------------------------
+    // The shift by LUT_W-1 undoes the LUT scaling (32767 ~ 1.0). At the
+    // saturation point you DO have to saturate: wrapping around makes clicks.
     //
-    // POR QUE VA PARTIDO EN DOS. Haciendo producto, desplazamiento y
-    // saturacion en el mismo ciclo, el camino atraviesa la cadena entera del
-    // DSP48 (pre-adder, multiplicador, ALU, salida) y ademas las LUT de la
-    // saturacion: medido, 10 niveles y 3.452 ns de logica, el 60 % del camino
-    // critico. Registrando el producto, el DSP se queda con su cadena y la
-    // saturacion con la suya.
+    // WHY IT IS SPLIT IN TWO. Doing product, shift and saturation in the same
+    // cycle, the path crosses the whole DSP48 chain (pre-adder, multiplier,
+    // ALU, output) and the saturation LUTs on top: measured, 10 levels and
+    // 3.452 ns of logic, 60 % of the critical path. Registering the product
+    // leaves the DSP with its own chain and the saturation with its own.
     //
-    // Cuesta un ciclo mas de latencia en el canal. No cuesta nada mas: los
-    // registros de entrada y salida del DSP48 ya estaban ahi sin usar.
+    // It costs one more cycle of latency in the channel. It costs nothing
+    // else: the input and output registers of the DSP48 were already there,
+    // unused.
     localparam signed [MIX_W-1:0] MIX_MAX =  (1 <<< (MIX_W-1)) - 1;
     localparam signed [MIX_W-1:0] MIX_MIN = -(1 <<< (MIX_W-1));
 
     wire signed [IN_W+LUT_W-1:0] prod_i = x_d1 * cos_v;
     wire signed [IN_W+LUT_W-1:0] prod_q = -x_d1 * sin_v;
 
-    // --- Etapa 1: el producto -----------------------------------------------
+    // --- Stage 1: the product ------------------------------------------------
     reg signed [IN_W+LUT_W-1:0] prod_i_r, prod_q_r;
     reg                         prod_valid;
 
-    // --- Etapa 2: desplazamiento y saturacion -------------------------------
+    // --- Stage 2: shift and saturation ---------------------------------------
     wire signed [IN_W+LUT_W-1:0] shr_i = prod_i_r >>> (LUT_W-1);
     wire signed [IN_W+LUT_W-1:0] shr_q = prod_q_r >>> (LUT_W-1);
 
@@ -121,9 +121,9 @@ module ddc_front #(
         end
     end
 
-    // ---- Integradores ------------------------------------------------------
-    // Los dos comparten in_valid, asi que su dec_now es el mismo. Se toma el
-    // de la rama I.
+    // ---- Integrators --------------------------------------------------------
+    // Both share in_valid, so their dec_now is the same. The one from the I
+    // branch is the one that gets used.
     wire dec_q_unused;
 
     cic_integ #(.IN_W(MIX_W), .N(CIC_N), .R(CIC_R), .ACC_W(CIC_W)) u_int_i (

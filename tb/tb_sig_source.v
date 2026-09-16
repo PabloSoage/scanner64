@@ -1,23 +1,25 @@
 // ---------------------------------------------------------------------------
-// tb_sig_source.v — Vuelca las muestras de `sig_source` para compararlas con
-// el modelo de Python.
+// tb_sig_source.v - Dumps `sig_source` samples so they can be compared against
+// the Python model.
 //
-// Existe porque al contrastar el hardware contra el modelo los dos canales con
-// tono cuadraban al bit y los dos vacios fallaban por 1 LSB sobre un valor de
-// 2. La sospecha era que el estimulo de Python no fuese identico al del RTL, y
-// aqui se vio: `sig_source` emite UN CERO antes de la primera muestra buena,
-// por el registro de salida. Es decir  rtl[n] = modelo[n-1].
+// It exists because when checking the hardware against the model, the two
+// channels with a tone matched to the bit and the two empty ones were off by
+// 1 LSB on a value of 2. The suspicion was that the Python stimulus was not
+// identical to the RTL one, and here it showed: `sig_source` emits ONE ZERO
+// before the first good sample, because of its output register. That is,
+// rtl[n] = model[n-1].
 //
-// Ese cero entra en el CIC y avanza el NCO del canal. A un canal con tono no le
-// afecta --su salida vale 4096 y el cero se pierde en el promedio-- pero a un
-// canal vacio le cambia el resultado en 1 LSB, que ahi es todo.
+// That zero enters the CIC and advances the channel's NCO. It does not affect
+// a channel with a tone -- its output is 4096 and the zero is lost in the
+// average -- but for an empty channel it changes the result by 1 LSB, which
+// there is everything.
 //
-// Con el cero modelado, los cuatro canales cuadran exactos contra la placa.
+// With the zero modelled, all four channels match the board exactly.
 //
 //     xvlog nco.v sig_source.v tb_sig_source.v
 //     xelab tb_sig_source -s sigsim && xsim sigsim -R
 //
-// Deja sig_rtl.txt con 300 muestras, una por linea.
+// Leaves sig_rtl.txt with 300 samples, one per line.
 // ---------------------------------------------------------------------------
 
 `timescale 1ns/1ps

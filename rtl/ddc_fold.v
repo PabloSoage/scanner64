@@ -1,78 +1,79 @@
 // ---------------------------------------------------------------------------
-// ddc_fold.v — Un juego de NCO, mezclador e integradores para FOLD canales.
+// ddc_fold.v - One set of NCO, mixer and integrators for FOLD channels.
 //
-// LA IDEA
+// THE IDEA
 //
-// Los integradores procesan una muestra por ciclo de reloj. Si el reloj va mas
-// rapido que los datos, ese juego esta ocioso la mayor parte del tiempo:
+// The integrators process one sample per clock cycle. If the clock runs faster
+// than the data, that set sits idle most of the time:
 //
-//     canales por juego = floor(Fclk / Fs)
+//     channels per set = floor(Fclk / Fs)
 //
-// A 100 MHz de reloj y 25 MSPS de antena sobran tres de cada cuatro ciclos.
-// Plegando, un solo juego atiende cuatro canales y el area por canal se divide
-// por cuatro. Es el compromiso que ninguna CPU ni GPU puede ofrecer: aqui el
-// ancho de banda se cambia por canales, y la eleccion es del que integra.
+// At a 100 MHz clock and a 25 MSPS antenna, three cycles out of four are
+// spare. Folded, a single set serves four channels and the area per channel is
+// divided by four. It is the trade neither a CPU nor a GPU can offer: here you
+// exchange bandwidth for channels, and the choice belongs to whoever
+// integrates the thing.
 //
-// Y ataca justo el recurso que limita. Medido en el barrido de N_CH: la BRAM
-// es lo primero que se acaba (~143 canales) porque cada canal se lleva un tile
-// entero para su ROM de seno. Plegando, FOLD canales comparten UNA ROM.
+// And it attacks exactly the limiting resource. Measured in the N_CH sweep:
+// BRAM runs out first (~143 channels) because every channel takes a whole tile
+// for its sine ROM. Folded, FOLD channels share ONE ROM.
 //
-// COMO SE EVITA EL RIESGO DE LA TUBERIA
+// HOW THE PIPELINE HAZARD IS AVOIDED
 //
-// El peligro de multiplexar un filtro recursivo es leer el estado de un canal
-// antes de que se haya escrito el de su vuelta anterior. Aqui no puede pasar,
-// por construccion:
+// The danger in multiplexing a recursive filter is reading one channel's state
+// before the state from its previous turn has been written. That cannot happen
+// here, by construction:
 //
-//   - La fase se lee Y se escribe en la etapa 0, el mismo ciclo.
-//   - El estado del CIC se lee Y se escribe en la ultima etapa, el mismo ciclo.
+//   - The phase is read AND written in stage 0, on the same cycle.
+//   - The CIC state is read AND written in the last stage, on the same cycle.
 //
-// Entre medias la tuberia solo ARRASTRA el numero de ranura. Ningun estado
-// queda en vuelo entre su lectura y su escritura, asi que FOLD puede ser
-// cualquier valor >= 1 sin necesidad de adelantamiento.
+// In between, the pipeline only CARRIES the slot number along. No state is
+// ever in flight between its read and its write, so FOLD can be any value >= 1
+// with no forwarding needed.
 //
-//     etapa 0   ranura s: direccion de la ROM desde phase[s], phase[s] += ftw[s]
-//     etapa 1   sale el seno y el coseno (la ROM esta registrada)
-//     etapa 2   el producto del mezclador
-//     etapa 3   desplazamiento y saturacion
-//     etapa 4   integradores de la ranura s, y diezmado
+//     stage 0   slot s: ROM address from phase[s], phase[s] += ftw[s]
+//     stage 1   sine and cosine come out (the ROM is registered)
+//     stage 2   the mixer product
+//     stage 3   shift and saturation
+//     stage 4   slot s integrators, and decimation
 //
-// POR QUE EL ESTADO SE QUEDA EN FLIP-FLOPS, Y NO ES POR NO HABERLO INTENTADO
+// WHY THE STATE STAYS IN FLIP-FLOPS, AND NOT FOR LACK OF TRYING
 //
-// Son 216 bits por canal, casi la mitad de todo el registro del diseno, asi que
-// merecia la pena probar a sacarlos. Probado y medido, con FOLD=16:
+// It is 216 bits per channel, nearly half of all the registers in the design,
+// so it was worth trying to get them out. Tried and measured, with FOLD=16:
 //
-//                        LUT      FF
-//   registros (esto)    2.593   4.747
-//   con barrido        12.289   4.654     <- peor en todo
+//                          LUT      FF
+//   registers (this)     2,593   4,747
+//   with a clear sweep  12,289   4,654     <- worse on every count
 //
-// La inferencia de RAM distribuida necesita un patron simple: una direccion de
-// lectura, una de escritura. La cascada del CIC lee TRES posiciones distintas
-// del array en el mismo ciclo --acc[k] y acc[k-1] de cada etapa-- y con eso
-// Vivado abandona la inferencia. Cambiar el reset paralelo por un barrido solo
-// empeoro las cosas: cada posicion paso a decidir entre limpiada, actualizada o
-// retenida, con DOS fuentes de direccion, y ese decodificador multiplico los
-// LUT por cinco sin sacar un solo registro.
+// Distributed RAM inference needs a simple pattern: one read address, one
+// write address. The CIC cascade reads THREE different positions of the array
+// on the same cycle -- acc[k] and acc[k-1] of every stage -- and with that
+// Vivado gives up on inference. Replacing the parallel reset with a clearing
+// sweep only made things worse: every position then had to choose between
+// cleared, updated or held, with TWO address sources, and that decoder
+// multiplied the LUTs by five without removing a single register.
 //
-// Para que pagara habria que pasar la cascada a una etapa por ciclo, lo que
-// deja una lectura y una escritura y si es inferible. Pero multiplica la ronda
-// por CIC_N: cada muestra costaria FOLD*CIC_N ciclos y la aritmetica del
-// plegado pasaria a Fs <= Fclk/(FOLD*3), que se come buena parte del beneficio.
-// No sale a cuenta.
+// For it to pay off, the cascade would have to go to one stage per cycle,
+// which leaves one read and one write and IS inferable. But that multiplies
+// the round by CIC_N: every sample would cost FOLD*CIC_N cycles and the
+// folding arithmetic would become Fs <= Fclk/(FOLD*3), which eats a good part
+// of the benefit. Not worth it.
 //
-// EL RESET SI LIMPIA, A DIFERENCIA DE comb_bank
+// THE RESET DOES CLEAR HERE, UNLIKE comb_bank
 //
-// comb_bank deja su estado sin resetear a proposito, para que viva en LUTRAM en
-// vez de en 7001 flip-flops. Aqui se hace lo contrario y conviene decir por que:
-// el estado son unos 1100 bits con FOLD=4, que no salvan nada, y la alternativa
-// ya nos costo una tarde --las primeras salidas tras un reset en caliente eran
-// basura y no lo era el diseno--. Correccion por delante de un ahorro que no
-// existe.
+// comb_bank leaves its state unreset on purpose, so it lives in LUTRAM instead
+// of in 7001 flip-flops. Here the opposite choice is made, and it is worth
+// saying why: the state is about 1100 bits with FOLD=4, which saves nothing,
+// and the alternative already cost us an afternoon -- the first outputs after
+// a warm reset were garbage and the design was not. Correctness ahead of a
+// saving that does not exist.
 // ---------------------------------------------------------------------------
 
 `default_nettype none
 
 module ddc_fold #(
-    parameter integer FOLD       = 4,       // canales por juego
+    parameter integer FOLD       = 4,       // channels per set
     parameter integer IN_W       = 16,
     parameter integer PHASE_W    = 32,
     parameter integer LUT_ADDR_W = 10,
@@ -82,34 +83,34 @@ module ddc_fold #(
     parameter integer CIC_R      = 64,
     parameter integer CIC_W      = 36,
     parameter         LUT_FILE   = "sin_lut.mem",
-    // Derivado de FOLD, pero tiene que vivir en la lista de parametros: un
-    // localparam del cuerpo no se puede usar en la lista de puertos.
+    // Derived from FOLD, but it has to live in the parameter list: a body
+    // localparam cannot be used in the port list.
     parameter integer SLOT_W     = (FOLD > 1) ? $clog2(FOLD) : 1
 ) (
     input  wire                      clk,
     input  wire                      rst_n,
 
-    // Sintonia, una por ranura.
+    // Tuning, one per slot.
     input  wire                      cfg_we,
     input  wire [SLOT_W-1:0]         cfg_slot,
     input  wire [PHASE_W-1:0]        cfg_ftw,
 
-    // Una muestra cada FOLD ciclos como mucho: la ronda tarda eso en pasar.
+    // One sample every FOLD cycles at most: that is how long the round takes.
     input  wire                      in_valid,
     input  wire signed [IN_W-1:0]    in_data,
-    output wire                      ready,      // puede aceptar otra muestra
+    output wire                      ready,      // can take another sample
 
-    // Salida diezmada, con la ranura a la que pertenece.
+    // Decimated output, with the slot it belongs to.
     output reg                       out_valid,
     output reg  [SLOT_W-1:0]         out_slot,
     output reg  signed [CIC_W-1:0]   tap_i,
     output reg  signed [CIC_W-1:0]   tap_q,
 
-    // Se pega en alto si llega una muestra mientras la ronda anterior sigue
-    // en curso. El plegado EXIGE Fs <= Fclk/FOLD; si se le alimenta mas rapido
-    // descarta muestras, y lo haria en silencio. Una salida diezmada con
-    // muestras perdidas sigue pareciendo una señal, asi que el unico modo de
-    // enterarse es que el propio hardware lo diga.
+    // Sticks high if a sample arrives while the previous round is still in
+    // progress. Folding REQUIRES Fs <= Fclk/FOLD; fed any faster it drops
+    // samples, and it would do so silently. A decimated output with missing
+    // samples still looks like a signal, so the only way to find out is for
+    // the hardware itself to say so.
     output reg                       overrun
 );
 
@@ -117,29 +118,29 @@ module ddc_fold #(
     localparam integer QUARTER = 1 << (LUT_ADDR_W - 2);
     localparam integer DEPTH   = 1 << LUT_ADDR_W;
 
-    // ---- La ROM que comparten las FOLD ranuras -----------------------------
+    // ---- The ROM the FOLD slots share --------------------------------------
     (* rom_style = "block" *)
     reg signed [LUT_W-1:0] lut [0:DEPTH-1];
     initial $readmemh(LUT_FILE, lut);
 
-    // ---- Estado por ranura -------------------------------------------------
+    // ---- Per-slot state ----------------------------------------------------
     reg [PHASE_W-1:0] phase [0:FOLD-1];
     reg [PHASE_W-1:0] ftw   [0:FOLD-1];
     reg [CNT_W-1:0]   cnt   [0:FOLD-1];
-    // Aplanados: [ranura*CIC_N + etapa]
+    // Flattened: [slot*CIC_N + stage]
     reg signed [CIC_W-1:0] acc_i [0:FOLD*CIC_N-1];
     reg signed [CIC_W-1:0] acc_q [0:FOLD*CIC_N-1];
 
     integer k;
 
-    // ---- Control de la ronda -----------------------------------------------
+    // ---- Round control -----------------------------------------------------
     reg               busy;
     reg [SLOT_W-1:0]  slot;
     reg signed [IN_W-1:0] x_hold;
 
     assign ready = !busy;
 
-    // ---- Tuberia: valido y ranura arrastrados ------------------------------
+    // ---- Pipeline: valid and slot carried along ----------------------------
     reg              v1, v2, v3, v4;
     reg [SLOT_W-1:0] s1, s2, s3, s4;
 
@@ -156,7 +157,7 @@ module ddc_fold #(
 
     reg signed [MIX_W-1:0] mix_i, mix_q;
 
-    // Direccion de la ROM para la ranura que se emite en la etapa 0.
+    // ROM address for the slot being issued in stage 0.
     wire [LUT_ADDR_W-1:0] addr_cos = phase[slot][PHASE_W-1 -: LUT_ADDR_W];
     wire [LUT_ADDR_W-1:0] addr_sin = addr_cos - QUARTER[LUT_ADDR_W-1:0];
 
@@ -191,12 +192,12 @@ module ddc_fold #(
             if (cfg_we) ftw[cfg_slot] <= cfg_ftw;
             if (in_valid && busy) overrun <= 1'b1;
 
-            // --- Etapa 0: arranque de ronda y direccionamiento de la ROM ----
+            // --- Stage 0: round start and ROM addressing --------------------
             v1 <= 1'b0;
             if (in_valid && !busy) begin
                 busy   <= 1'b1;
                 x_hold <= in_data;
-                // La ranura 0 se emite ya, con la muestra recien llegada.
+                // Slot 0 is issued right away, with the sample just arrived.
                 cos_r <= lut[phase[0][PHASE_W-1 -: LUT_ADDR_W]];
                 sin_r <= lut[(phase[0][PHASE_W-1 -: LUT_ADDR_W])
                              - QUARTER[LUT_ADDR_W-1:0]];
@@ -217,13 +218,13 @@ module ddc_fold #(
                 else slot <= slot + 1'b1;
             end
 
-            // --- Etapa 2: el producto ---------------------------------------
+            // --- Stage 2: the product ---------------------------------------
             prod_i_r <= x1 *  cos_r;
             prod_q_r <= -x1 * sin_r;
             v2 <= v1;
             s2 <= s1;
 
-            // --- Etapa 3: desplazamiento y saturacion -----------------------
+            // --- Stage 3: shift and saturation ------------------------------
             mix_i <= (shr_i > MIX_MAX) ? MIX_MAX :
                      (shr_i < MIX_MIN) ? MIX_MIN : shr_i[MIX_W-1:0];
             mix_q <= (shr_q > MIX_MAX) ? MIX_MAX :
@@ -231,10 +232,10 @@ module ddc_fold #(
             v3 <= v2;
             s3 <= s2;
 
-            // --- Etapa 4: integradores de la ranura s3 ----------------------
-            // Cascada REGISTRADA: cada etapa usa el valor PREVIO de la
-            // anterior. Leer y escribir en el mismo ciclo es lo que hace que no
-            // haya riesgo de tuberia con ningun FOLD.
+            // --- Stage 4: slot s3 integrators -------------------------------
+            // REGISTERED cascade: every stage uses the PREVIOUS value of the
+            // one before it. Reading and writing on the same cycle is what
+            // makes the pipeline hazard-free for any FOLD.
             v4 <= v3;
             s4 <= s3;
             out_valid <= 1'b0;
@@ -252,8 +253,8 @@ module ddc_fold #(
                     cnt[s3]   <= {CNT_W{1'b0}};
                     out_valid <= 1'b1;
                     out_slot  <= s3;
-                    // La salida es el estado NUEVO de la ultima etapa, igual
-                    // que en cic_integ: el que acaba de calcularse arriba.
+                    // The output is the NEW state of the last stage, the same
+                    // as in cic_integ: the one just computed above.
                     tap_i <= acc_i[s3*CIC_N + CIC_N-1]
                            + acc_i[s3*CIC_N + CIC_N-2];
                     tap_q <= acc_q[s3*CIC_N + CIC_N-1]

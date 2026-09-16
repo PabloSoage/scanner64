@@ -1,34 +1,35 @@
 // ---------------------------------------------------------------------------
-// ddc_channel.v — Un canal completo de conversion a banda base.
+// ddc_channel.v - One complete down-conversion channel.
 //
-//   x[n] --> [retardo] --> (x) --> CIC I --> >> --> I
-//                           ^
-//                        NCO cos/sin
-//                           v
-//            [retardo] --> (x) --> CIC Q --> >> --> Q
+//   x[n] --> [delay] --> (x) --> CIC I --> >> --> I
+//                         ^
+//                      NCO cos/sin
+//                         v
+//            [delay] --> (x) --> CIC Q --> >> --> Q
 //
-// Coste por canal, MEDIDO por sintesis out-of-context
-// (Vivado 2026.1, xck26-sfvc784-2LV-c, un solo canal):
-//   3 DSP48E2     la estimacion inicial de 2 se quedaba corta
-//   1 BRAM tile   2x RAMB18E2: la LUT del NCO, hoy SIN compartir
-//   600 CLB LUT   los acumuladores del CIC, que no usan DSP
+// Cost per channel, MEASURED by out-of-context synthesis
+// (Vivado 2026.1, xck26-sfvc784-2LV-c, a single channel):
+//   3 DSP48E2     the initial estimate of 2 fell short
+//   1 BRAM tile   2x RAMB18E2: the NCO LUT, today NOT shared
+//   600 CLB LUT   the CIC accumulators, which do not use DSPs
 //   677 FF
-//   Fmax 220 MHz  post-sintesis con T=10 ns. Optimista: aun sin rutar.
+//   Fmax 220 MHz  post-synthesis with T=10 ns. Optimistic: not yet routed.
 //
-// El recurso critico NO son los multiplicadores. Techos en el ZU5EV:
-//   por DSP   1248 / 3   = 416 canales
-//   por LUT   117120/600 = 195 canales
-//   por BRAM  144 / 1    = 144 canales   <-- el muro real
+// The critical resource is NOT the multipliers. Ceilings on the ZU5EV:
+//   by DSP    1248 / 3   = 416 channels
+//   by LUT    117120/600 = 195 channels
+//   by BRAM   144 / 1    = 144 channels   <-- the real wall
 //
-// Compartir la LUT del NCO entre canales es lo unico que mueve ese techo.
+// Sharing the NCO LUT between channels is the only thing that moves that
+// ceiling.
 //
-// Desde la separacion en piezas, esto es ddc_front (NCO + mezclador +
-// integradores) mas dos comb_chain y la normalizacion. En un banco de muchos
-// canales conviene NO usar este modulo, sino ddc_front + comb_bank, que
-// comparte los peines entre canales. Ver el README.
+// Since the split into pieces, this is ddc_front (NCO + mixer + integrators)
+// plus two comb_chain and the normalisation. In a bank of many channels you
+// want NOT to use this module but ddc_front + comb_bank, which shares the
+// combs between channels. See the README.
 //
-// Verificado: tb_ddc_channel compara contra los vectores dorados de
-// model/ddc_model.py. 0 discrepancias.
+// Verified: tb_ddc_channel compares against the golden vectors from
+// model/ddc_model.py. 0 mismatches.
 // ---------------------------------------------------------------------------
 
 `default_nettype none
@@ -48,7 +49,7 @@ module ddc_channel #(
 ) (
     input  wire                       clk,
     input  wire                       rst_n,
-    input  wire [PHASE_W-1:0]         ftw,        // palabra de sintonia
+    input  wire [PHASE_W-1:0]         ftw,        // frequency tuning word
     input  wire                       in_valid,
     input  wire signed [IN_W-1:0]     in_data,
     output wire                       out_valid,
@@ -56,7 +57,7 @@ module ddc_channel #(
     output wire signed [OUT_W-1:0]    out_q
 );
 
-    // ---- Parte a tasa de entrada: NCO, mezclador e integradores -----------
+    // ---- Input-rate part: NCO, mixer and integrators -----------------------
     wire                    dec_now;
     wire signed [CIC_W-1:0] tap_i, tap_q;
 
@@ -70,7 +71,7 @@ module ddc_channel #(
         .dec_now (dec_now), .tap_i (tap_i), .tap_q (tap_q)
     );
 
-    // ---- Peines propios, a la tasa diezmada --------------------------------
+    // ---- Its own combs, at the decimated rate ------------------------------
     wire                    cic_valid_i, cic_valid_q;
     wire signed [CIC_W-1:0] cic_i, cic_q;
 
@@ -86,9 +87,9 @@ module ddc_channel #(
         .out_valid (cic_valid_q), .out_data (cic_q)
     );
 
-    // ---- Normalizacion -----------------------------------------------------
-    // La ganancia del CIC es (R*M)^N = 2^CIC_GROWTH exactos, asi que basta un
-    // desplazamiento aritmetico. Nada de divisiones.
+    // ---- Normalisation ------------------------------------------------------
+    // The CIC gain is exactly (R*M)^N = 2^CIC_GROWTH, so an arithmetic shift
+    // is enough. No divisions anywhere.
     assign out_valid = cic_valid_i;
     assign out_i     = cic_i[CIC_GROWTH +: OUT_W];
     assign out_q     = cic_q[CIC_GROWTH +: OUT_W];

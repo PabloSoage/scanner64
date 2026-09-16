@@ -1,11 +1,11 @@
 // ---------------------------------------------------------------------------
-// nco.v — Oscilador controlado numericamente.
+// nco.v - Numerically controlled oscillator.
 //
-// Acumulador de fase + LUT de coseno en BRAM de doble puerto. El seno se saca
-// de la misma tabla desplazando un cuarto de vuelta, que ahorra media BRAM.
+// Phase accumulator + cosine LUT in dual-port BRAM. The sine comes out of the
+// same table, addressed a quarter turn back, which saves half a BRAM.
 //
-// Transcripcion directa de la clase NCO de model/ddc_model.py. Si cambias algo
-// aqui, cambialo alli y regenera los vectores.
+// Direct transcription of the NCO class in model/ddc_model.py. If you change
+// something here, change it there too and regenerate the vectors.
 // ---------------------------------------------------------------------------
 
 `default_nettype none
@@ -18,8 +18,8 @@ module nco #(
 ) (
     input  wire                      clk,
     input  wire                      rst_n,
-    input  wire                      en,        // avanza la fase
-    input  wire [PHASE_W-1:0]        ftw,       // palabra de sintonia
+    input  wire                      en,        // advance the phase
+    input  wire [PHASE_W-1:0]        ftw,       // frequency tuning word
     output reg  signed [LUT_W-1:0]   cos_o,
     output reg  signed [LUT_W-1:0]   sin_o
 );
@@ -27,7 +27,7 @@ module nco #(
     localparam integer LUT_DEPTH   = 1 << LUT_ADDR_W;
     localparam integer QUARTER     = 1 << (LUT_ADDR_W - 2);
 
-    // ROM de coseno. Se infiere como BRAM de doble puerto.
+    // Cosine ROM. Inferred as a dual-port BRAM.
     (* rom_style = "block" *)
     reg signed [LUT_W-1:0] lut [0:LUT_DEPTH-1];
     initial $readmemh(LUT_FILE, lut);
@@ -35,7 +35,7 @@ module nco #(
     reg [PHASE_W-1:0] phase;
 
     wire [LUT_ADDR_W-1:0] addr_cos = phase[PHASE_W-1 -: LUT_ADDR_W];
-    // sin(x) = cos(x - pi/2)  ->  restar un cuarto de tabla (envolvente natural)
+    // sin(x) = cos(x - pi/2)  ->  subtract a quarter table (wraps naturally)
     wire [LUT_ADDR_W-1:0] addr_sin = addr_cos - QUARTER[LUT_ADDR_W-1:0];
 
     always @(posedge clk) begin

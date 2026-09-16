@@ -1,55 +1,57 @@
 // ---------------------------------------------------------------------------
-// scanner_axi.v — scanner_top + sig_source, con interfaz AXI4-Lite.
+// scanner_axi.v - scanner_top + sig_source, with an AXI4-Lite interface.
 //
-// Lo que hace falta para meter el escaner en la PL de la KV260 y hablar con el
-// desde Linux. Sin DMA: para VALIDAR el diseno en silicio basta con registros.
+// What it takes to get the scanner into the KV260's PL and talk to it from
+// Linux. No DMA: to VALIDATE the design in silicon, registers are enough.
 //
-//   sig_source  genera el estimulo DENTRO de la PL, a la tasa del reloj. Es la
-//               variante (a) de METODOLOGIA.md: las muestras nacen en la PL y
-//               el generador es hardware aparte que no le roba un solo ciclo
-//               al DDC. En una CPU generar cuesta la mitad del tiempo; aqui,
-//               cero.
-//   scanner_top los N canales.
-//   AXI4-Lite   configuracion y lectura de potencias.
+//   sig_source  generates the stimulus INSIDE the PL, at clock rate. This is
+//               variant (a) of METODOLOGIA.md: the samples are born in the PL
+//               and the generator is separate hardware that does not steal a
+//               single cycle from the DDC. On a CPU, generating costs half the
+//               time; here, nothing.
+//   scanner_top the N channels.
+//   AXI4-Lite   configuration and power readout.
 //
-// Los contadores de muestras y de salidas son la prueba de que no se pierde
-// nada: a 100 MSPS, smp_cnt tiene que avanzar exactamente un paso por ciclo
-// con el generador activo, y out_cnt uno por cada CIC_R muestras. Si la PL
-// perdiera una sola muestra, la relacion dejaria de cuadrar.
+// The sample and output counters are the proof that nothing gets lost: at
+// 100 MSPS, smp_cnt has to advance exactly one step per cycle with the
+// generator running, and out_cnt one per CIC_R samples. If the PL dropped a
+// single sample, the relation would stop adding up.
 //
-// UN SOLO DOMINIO DE RELOJ. El AXI y el escaner van con el mismo `clk`, que
-// sera el pl_clk0 del PS (100 MHz por defecto). No hay cruce de dominios que
-// razonar, y 100 MHz entra de sobra en los 170 MHz que cierra el diseno.
+// ONE SINGLE CLOCK DOMAIN. The AXI and the scanner run off the same `clk`,
+// which will be the PS pl_clk0 (100 MHz by default). There is no domain
+// crossing to reason about, and 100 MHz fits comfortably inside the 170 MHz
+// the design closes at.
 //
-// MAPA DE REGISTROS (offsets de byte)
+// REGISTER MAP (byte offsets)
 //
-//   0x00  ID        RO  0x5CA44E64, para comprobar que el bitstream es este
-//   0x04  CTRL      RW  [0] run (reset activo bajo del escaner)
-//                       [1] src_en      generador en marcha
-//                       [2] noise_en    anade ruido del LFSR
-//                       [3] clear       pulso: reinicia los acumuladores
-//   0x08  SRC_FTWA  RW  palabra de sintonia del tono A del generador
-//   0x0C  SRC_FTWB  RW  idem tono B
+//   0x00  ID        RO  0x5CA44E64, to check the bitstream is this one
+//   0x04  CTRL      RW  [0] run (scanner active-low reset)
+//                       [1] src_en      generator running
+//                       [2] noise_en    add LFSR noise
+//                       [3] clear       pulse: reset the accumulators
+//   0x08  SRC_FTWA  RW  frequency tuning word of the generator's tone A
+//   0x0C  SRC_FTWB  RW  same for tone B
 //   0x10  SRC_SH    RW  [3:0] shift_a  [7:4] shift_b  [11:8] shift_n
-//   0x14  CFG_CH    RW  canal al que apunta la siguiente escritura de sintonia
-//   0x18  CFG_FTW   RW  escribir aqui carga la sintonia en el canal CFG_CH
-//   0x1C  PWR_LEN   RW  muestras por ventana de medida de potencia
-//   0x20  RD_CH     RW  canal cuya potencia se lee
-//   0x24  PWR_LO    RO  potencia del canal RD_CH, bits 31:0
+//   0x14  CFG_CH    RW  channel the next tuning write goes to
+//   0x18  CFG_FTW   RW  writing here loads the tuning into channel CFG_CH
+//   0x1C  PWR_LEN   RW  samples per power measurement window
+//   0x20  RD_CH     RW  channel whose power is read
+//   0x24  PWR_LO    RO  power of channel RD_CH, bits 31:0
 //   0x28  PWR_HI    RO  bits 47:32
-//   0x2C  READY     RO  pwr_ready, un bit por canal (hasta 32)
-//   0x30  SMP_LO    RO  muestras entradas al escaner, bits 31:0
+//   0x2C  READY     RO  pwr_ready, one bit per channel (up to 32)
+//   0x30  SMP_LO    RO  samples fed into the scanner, bits 31:0
 //   0x34  SMP_HI    RO  bits 63:32
-//   0x38  OUT_CNT   RO  salidas producidas por el canal 0
-//   0x3C  NCH       RO  numero de canales sintetizado
-//   0x40  TAP_I     RO  ultima muestra I del canal RD_CH (con signo, 18 b)
-//   0x44  TAP_Q     RO  ultima muestra Q
-//   0x48  TAP_CNT   RO  cuantas muestras I/Q ha soltado ese canal
-//   0x4C  STATUS    RO  [0] fold_overrun   [5:1] FOLD sintetizado
+//   0x38  OUT_CNT   RO  outputs produced by channel 0
+//   0x3C  NCH       RO  number of channels synthesised
+//   0x40  TAP_I     RO  last I sample of channel RD_CH (signed, 18 b)
+//   0x44  TAP_Q     RO  last Q sample
+//   0x48  TAP_CNT   RO  how many I/Q samples that channel has emitted
+//   0x4C  STATUS    RO  [0] fold_overrun   [5:1] FOLD synthesised
 //
-// Los TAP no sirven para volcar datos --cambian a 1.5 MSPS y AXI-Lite no da
-// para tanto-- pero si para ver que hay actividad y que los valores son
-// razonables. El volcado continuo es lo que pedira un DMA, mas adelante.
+// The TAPs are no good for dumping data -- they change at 1.5 MSPS and
+// AXI-Lite cannot keep up -- but they are good for seeing that there is
+// activity and that the values are sensible. Continuous dumping is what will
+// call for a DMA, later on.
 // ---------------------------------------------------------------------------
 
 `default_nettype none
@@ -70,9 +72,9 @@ module scanner_axi #(
     parameter integer UNITS_PER_BANK = 32,
     parameter integer FOLD       = 1,
     parameter         LUT_FILE   = "sin_lut.mem",
-    parameter integer C_S_AXI_ADDR_WIDTH = 7      // 128 bytes = 32 registros
+    parameter integer C_S_AXI_ADDR_WIDTH = 7      // 128 bytes = 32 registers
 ) (
-    // --- AXI4-Lite slave, mismo reloj que el escaner -----------------------
+    // --- AXI4-Lite slave, same clock as the scanner ------------------------
     input  wire                                 s_axi_aclk,
     input  wire                                 s_axi_aresetn,
 
@@ -107,14 +109,14 @@ module scanner_axi #(
     wire clk   = s_axi_aclk;
     wire rst_n = s_axi_aresetn;
 
-    // ---- Registros de escritura -------------------------------------------
+    // ---- Write registers ---------------------------------------------------
     reg        r_run, r_src_en, r_noise_en;
     reg [31:0] r_ftw_a, r_ftw_b;
     reg [11:0] r_shift;
     reg [31:0] r_cfg_ch, r_cfg_ftw, r_pwr_len, r_rd_ch;
-    reg        r_cfg_we, r_clear;      // pulsos de un ciclo
+    reg        r_cfg_we, r_clear;      // one-cycle pulses
 
-    // ---- Generador dentro de la PL ----------------------------------------
+    // ---- Generator inside the PL -------------------------------------------
     wire                    src_valid;
     wire signed [IN_W-1:0]  src_data;
 
@@ -129,7 +131,7 @@ module scanner_axi #(
         .out_valid (src_valid), .out_data (src_data)
     );
 
-    // ---- El escaner --------------------------------------------------------
+    // ---- The scanner -------------------------------------------------------
     wire [PWR_W-1:0]        rd_pwr;
     wire [N_CH-1:0]         pwr_ready;
     wire                    tap_valid;
@@ -152,7 +154,7 @@ module scanner_axi #(
         .tap_i (tap_i), .tap_q (tap_q), .fold_overrun (fold_overrun)
     );
 
-    // ---- Contadores: la prueba de que no se pierde una muestra ------------
+    // ---- Counters: the proof that not one sample is lost -------------------
     reg [63:0] smp_cnt;
     reg [31:0] out_cnt;
     reg signed [OUT_W-1:0] tap_i_r, tap_q_r;
@@ -167,15 +169,15 @@ module scanner_axi #(
             if (src_valid)  smp_cnt <= smp_cnt + 64'd1;
             if (tap_valid) begin
                 out_cnt <= out_cnt + 32'd1;
-                // Se congela la ultima muestra del canal seleccionado, para
-                // poder mirarla por AXI sin necesidad de DMA.
+                // The selected channel's last sample is frozen here, so it can
+                // be inspected over AXI without needing a DMA.
                 tap_i_r <= tap_i;
                 tap_q_r <= tap_q;
             end
         end
     end
 
-    // ---- AXI4-Lite: escritura ---------------------------------------------
+    // ---- AXI4-Lite: write --------------------------------------------------
     reg [C_S_AXI_ADDR_WIDTH-1:0] waddr;
 
     always @(posedge clk) begin
@@ -189,9 +191,9 @@ module scanner_axi #(
             r_run      <= 1'b0;
             r_src_en   <= 1'b0;
             r_noise_en <= 1'b0;
-            r_ftw_a    <= 32'h1999_999A;   // 10 MHz a 100 MSPS
-            r_ftw_b    <= 32'h2666_6666;   // 15 MHz a 100 MSPS
-            r_shift    <= 12'h022;         // los dos tonos a 1/4: la suma no satura
+            r_ftw_a    <= 32'h1999_999A;   // 10 MHz at 100 MSPS
+            r_ftw_b    <= 32'h2666_6666;   // 15 MHz at 100 MSPS
+            r_shift    <= 12'h022;         // both tones at 1/4: the sum will not saturate
             r_cfg_ch   <= 32'd0;
             r_cfg_ftw  <= 32'd0;
             r_pwr_len  <= 32'd1024;
@@ -199,10 +201,10 @@ module scanner_axi #(
             r_cfg_we   <= 1'b0;
             r_clear    <= 1'b0;
         end else begin
-            r_cfg_we <= 1'b0;            // pulsos de un solo ciclo
+            r_cfg_we <= 1'b0;            // single-cycle pulses
             r_clear  <= 1'b0;
 
-            // Direccion y dato llegan juntos: se aceptan a la vez.
+            // Address and data arrive together: they are accepted together.
             if (!s_axi_awready && s_axi_awvalid && s_axi_wvalid && !s_axi_bvalid) begin
                 s_axi_awready <= 1'b1;
                 s_axi_wready  <= 1'b1;
@@ -224,13 +226,13 @@ module scanner_axi #(
                     5'h03: r_ftw_b   <= s_axi_wdata;
                     5'h04: r_shift   <= s_axi_wdata[11:0];
                     5'h05: r_cfg_ch  <= s_axi_wdata;
-                    5'h06: begin                       // CFG_FTW: carga y dispara
+                    5'h06: begin                       // CFG_FTW: load and fire
                         r_cfg_ftw <= s_axi_wdata;
                         r_cfg_we  <= 1'b1;
                     end
                     5'h07: r_pwr_len <= s_axi_wdata;
                     5'h08: r_rd_ch   <= s_axi_wdata;
-                    default: ;                        // RO o sin usar
+                    default: ;                        // RO or unused
                 endcase
                 s_axi_bvalid <= 1'b1;
                 s_axi_bresp  <= 2'b00;                // OKAY
@@ -240,13 +242,13 @@ module scanner_axi #(
         end
     end
 
-    // ---- AXI4-Lite: lectura ------------------------------------------------
+    // ---- AXI4-Lite: read ---------------------------------------------------
     reg [C_S_AXI_ADDR_WIDTH-1:0] raddr;
     reg [31:0] rmux;
 
-    // pwr_ready puede tener menos de 32 bits: se rellena con ceros. Va por
-    // generate porque una replicacion de ancho CERO es ilegal en Verilog, y
-    // con N_CH >= 32 eso es lo que saldria.
+    // pwr_ready may be narrower than 32 bits: it gets zero-padded. This goes
+    // through a generate because a replication of width ZERO is illegal in
+    // Verilog, and with N_CH >= 32 that is what would come out.
     wire [31:0] ready_ext;
     generate
         if (N_CH >= 32) assign ready_ext = pwr_ready[31:0];
@@ -274,10 +276,10 @@ module scanner_axi #(
             5'h10: rmux = {{(32-OUT_W){tap_i_r[OUT_W-1]}}, tap_i_r};
             5'h11: rmux = {{(32-OUT_W){tap_q_r[OUT_W-1]}}, tap_q_r};
             5'h12: rmux = out_cnt;
-            // STATUS. El bit de desbordamiento importa mas de lo que su tamaño
-            // sugiere: con plegado, alimentar mas rapido de Fs = Fclk/FOLD
-            // descarta muestras y la salida sigue pareciendo una señal. Sin
-            // este bit, esa perdida es invisible desde software.
+            // STATUS. The overflow bit matters more than its size suggests:
+            // with folding, feeding faster than Fs = Fclk/FOLD drops samples
+            // and the output still looks like a signal. Without this bit, that
+            // loss is invisible from software.
             5'h13: rmux = {26'd0, FOLD[4:0], fold_overrun};
             default: rmux = 32'd0;
         endcase

@@ -1,28 +1,29 @@
 // ---------------------------------------------------------------------------
-// cic_integ.v — Parte integradora del CIC, a la tasa de entrada.
+// cic_integ.v - Integrator half of the CIC, running at the input rate.
 //
-// Extraido de cic_decim para poder separar las dos mitades del filtro, que
-// corren a tasas muy distintas:
+// Split out of cic_decim so the two halves of the filter can be handled
+// separately, because they run at very different rates:
 //
-//   - los integradores procesan UNA MUESTRA POR CICLO. Van aqui, y hay que
-//     replicarlos por canal: no hay forma de compartirlos.
-//   - los peines procesan una muestra cada R ciclos. Van en comb_chain (uno
-//     por unidad) o en comb_bank (uno compartido entre muchas), que es lo que
-//     permite meter mas canales en el mismo chip.
+//   - the integrators process ONE SAMPLE PER CYCLE. They live here, and they
+//     have to be replicated per channel: there is no way to share them.
+//   - the combs process one sample every R cycles. They live in comb_chain
+//     (one per unit) or in comb_bank (one shared between many), and that is
+//     what lets more channels fit in the same chip.
 //
-// EL DESBORDAMIENTO ENVOLVENTE DE LOS INTEGRADORES ES INTENCIONADO. Desbordan
-// y los peines lo deshacen exactamente, siempre que ACC_W >= IN_W + N*log2(R*M).
-// Poner saturacion aqui ROMPE el filtro. Es el error clasico al portar un CIC.
+// THE INTEGRATORS' WRAPAROUND OVERFLOW IS INTENTIONAL. They overflow and the
+// combs undo it exactly, as long as ACC_W >= IN_W + N*log2(R*M). Adding
+// saturation here BREAKS the filter. It is the classic mistake when porting a
+// CIC.
 //
-// Requiere N >= 2.
+// Requires N >= 2.
 // ---------------------------------------------------------------------------
 
 `default_nettype none
 
 module cic_integ #(
     parameter integer IN_W  = 18,
-    parameter integer N     = 3,      // etapas
-    parameter integer R     = 64,     // factor de diezmado
+    parameter integer N     = 3,      // stages
+    parameter integer R     = 64,     // decimation factor
     parameter integer ACC_W = 36      // = IN_W + N*log2(R*M)
 ) (
     input  wire                    clk,
@@ -30,11 +31,11 @@ module cic_integ #(
     input  wire                    in_valid,
     input  wire signed [IN_W-1:0]  in_data,
 
-    // Pulso de diezmado: en este ciclo `tap` lleva la muestra que toca.
+    // Decimation pulse: on this cycle `tap` carries the sample that counts.
     output wire                    dec_now,
-    // Valor que tendra la ultima etapa TRAS absorber la muestra actual. El
-    // modelo lo lee en el mismo ciclo, asi que hay que anticiparlo. Es un solo
-    // sumador combinatorio, no una cadena.
+    // The value the last stage WILL have once it has absorbed the current
+    // sample. The model reads it on that same cycle, so it has to be
+    // anticipated. It is one combinational adder, not a chain.
     output wire signed [ACC_W-1:0] tap
 );
 
@@ -57,7 +58,7 @@ module cic_integ #(
         end else if (in_valid) begin
             integ[0] <= integ[0] + in_ext;
             for (i = 1; i < N; i = i + 1)
-                integ[i] <= integ[i] + integ[i-1];   // valor PREVIO: registrado
+                integ[i] <= integ[i] + integ[i-1];   // PREVIOUS value: registered
 
             cnt <= dec_now ? {CNT_W{1'b0}} : (cnt + 1'b1);
         end
