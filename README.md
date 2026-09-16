@@ -19,7 +19,7 @@ measured there.
 | **Throughput** | **100.05 MSPS**, one sample per clock cycle, which is `pl_clk0` exactly |
 | **Samples lost** | **none.** 200,733,580 in, 3,136,463 outputs against 3,136,462 expected — the +1 is the pipeline |
 | **Arithmetic** | **bit-exact against the Python model**, on all four channels, including the empty ones whose output is 1 and 2 LSB |
-| **Discrimination** | **58.0 dB** between channels sitting on a tone and channels tuned to empty band |
+| **Discrimination** | **59.7 dB** between channels sitting on a tone and channels tuned to empty band, with 16 channels |
 | **Power** | **8.38 mW per channel**, measured with the board's INA260 |
 | **Fmax** | **169.9 MHz** post-route on the `-2LV` part |
 
@@ -228,6 +228,12 @@ sudo ./scanner_ctl test          # the test that matters: discrimination in hard
 sudo ./scanner_ctl run 200000000 # and the one that proves nothing is dropped
 sudo ./scanner_ctl golden        # exact points on the signal, to check against the model
 ```
+
+One thing worth looking at in the output of `test`: channels tuned to the **same** frequency
+report the same power **down to the last digit**. Those are fully independent DDC chains, sharing
+nothing but the input stream. Not "close" — identical. That is what deterministic fixed-point
+arithmetic in hardware looks like, and it is why the same design can be checked bit for bit
+against a Python model.
 
 ---
 
