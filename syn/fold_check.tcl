@@ -1,20 +1,21 @@
 # ---------------------------------------------------------------------------
-# fold_check.tcl — El plegado contra el original, en area.
+# fold_check.tcl - The folded version against the original, in area.
 #
-# La pregunta es sencilla y no se puede contestar simulando: con los MISMOS
-# canales, ¿plegar ahorra area de verdad o solo la mueve de sitio?
+# The question is simple and cannot be answered by simulating: with the SAME
+# channels, does folding really save area or does it just move it somewhere
+# else?
 #
-# El plegado quita N_CH-N_SET juegos de NCO, mezclador e integradores, pero
-# mete a cambio un array de estado indexado por ranura. Si Vivado lo infiere
-# como LUTRAM distribuida, el ahorro es real; si lo pone en flip-flops --que es
-# lo que hizo con comb_bank cuando se le reseteaba-- el plegado puede salir
-# incluso mas caro. La sintesis es el unico arbitro.
+# Folding removes N_CH-N_SET sets of NCO, mixer and integrators, but puts in a
+# slot-indexed state array in exchange. If Vivado infers it as distributed
+# LUTRAM the saving is real; if it puts it in flip-flops -- which is what it
+# did with comb_bank when that was reset -- folding can come out even more
+# expensive. Synthesis is the only referee.
 #
-# Uso (desde un directorio de ruta corta con sin_lut.mem dentro):
+# Usage (from a short-path directory with sin_lut.mem in it):
 #     vivado -mode batch -nojournal -notrace \
 #            -source <repo>/syn/fold_check.tcl -tclargs 16 4
 #
-# Argumentos: N_CH y FOLD. Deja <N>ch_fold<F>_util.rpt y ..._timing.rpt.
+# Arguments: N_CH and FOLD. Leaves <N>ch_fold<F>_util.rpt and ..._timing.rpt.
 # ---------------------------------------------------------------------------
 
 set part xck26-sfvc784-2LV-c
@@ -44,18 +45,18 @@ set tag "${n}ch_fold${fold}"
 report_utilization -file ${tag}_util.rpt
 report_timing_summary -file ${tag}_timing.rpt
 
-# Lo que importa, en la salida, para no tener que abrir los informes.
+# What matters, on stdout, so the reports do not have to be opened.
 puts ""
 puts "=== N_CH=$n  FOLD=$fold ==="
 set fh [open ${tag}_util.rpt r]
 set txt [read $fh]
 close $fh
-foreach fila {"CLB LUTs" "CLB Registers" "Block RAM Tile" "DSPs"} {
-    foreach linea [split $txt "
+foreach row {"CLB LUTs" "CLB Registers" "Block RAM Tile" "DSPs"} {
+    foreach line [split $txt "
 "] {
-        if {[string match "|*$fila*|*" $linea]} {
-            set campos [split $linea "|"]
-            puts [format "  %-16s %8s" $fila [string trim [lindex $campos 2]]]
+        if {[string match "|*$row*|*" $line]} {
+            set fields [split $line "|"]
+            puts [format "  %-16s %8s" $row [string trim [lindex $fields 2]]]
             break
         }
     }

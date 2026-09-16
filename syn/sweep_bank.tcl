@@ -1,17 +1,17 @@
 # ---------------------------------------------------------------------------
-# sweep_bank.tcl — Barrido de N_CH sobre scanner_top.
+# sweep_bank.tcl - N_CH sweep over scanner_top.
 #
-# Sintetiza el banco completo out-of-context para un N_CH dado y deja los
-# informes. Repetido sobre varios N_CH da la curva de coste por canal, que es
-# lo que dice hasta donde se puede subir.
+# Synthesises the whole bank out-of-context for a given N_CH and leaves the
+# reports. Repeated over several N_CH it gives the cost-per-channel curve,
+# which is what tells you how far you can push it.
 #
-# Uso (desde un directorio de trabajo con ruta corta, con sin_lut.mem dentro):
+# Usage (from a working directory with a short path, with sin_lut.mem in it):
 #     vivado -mode batch -nojournal -notrace \
 #            -source <repo>/syn/sweep_bank.tcl -tclargs 16
 #
-# Tercer argumento opcional: limite de BRAM tiles, para experimentar con el
-# reparto BRAM/LUT. Ver la nota sobre esto en el README, seccion "Exprimirla
-# de verdad": forzarlo sale caro y empeora el techo.
+# Optional third argument: a BRAM tile limit, to experiment with the BRAM/LUT
+# split. See the note about this in the README, section "Pushing it properly":
+# forcing it is expensive and makes the ceiling worse.
 #     ... -tclargs 16 8
 # ---------------------------------------------------------------------------
 
@@ -45,6 +45,6 @@ report_timing_summary -delay_type max -file timing_n$n.rpt
 set wns  [get_property SLACK [get_timing_paths -delay_type max]]
 set fmax [expr {1000.0 / (10.0 - $wns)}]
 
-puts "=== scanner_top N_CH=$n sobre $part ==="
+puts "=== scanner_top N_CH=$n on $part ==="
 puts [format "  WNS  = %.3f ns" $wns]
-puts [format "  Fmax = %.2f MHz  (post-sintesis, sin rutar: optimista)" $fmax]
+puts [format "  Fmax = %.2f MHz  (post-synthesis, not routed: optimistic)" $fmax]

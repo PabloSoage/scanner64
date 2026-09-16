@@ -1,4 +1,4 @@
-# Sintesis OOC de ddc_fold a solas, para saber cuanto pesa cada pieza.
+# OOC synthesis of ddc_fold on its own, to find out how much each piece weighs.
 #     vivado -mode batch -nojournal -notrace -source ooc_fold.tcl -tclargs 16
 set part xck26-sfvc784-2LV-c
 set here [file dirname [file normalize [info script]]]
@@ -10,16 +10,16 @@ read_xdc [file join $here clk.xdc]
 synth_design -top ddc_fold -part $part -mode out_of_context -generic FOLD=$fold
 report_utilization -file fold_solo_f${fold}.rpt
 puts ""
-puts "=== ddc_fold solo, FOLD=$fold  ($fold canales) ==="
+puts "=== ddc_fold alone, FOLD=$fold  ($fold channels) ==="
 set fh [open fold_solo_f${fold}.rpt r]
 set txt [read $fh]
 close $fh
-foreach fila {"CLB LUTs" "CLB Registers" "LUT as Distributed RAM" "Block RAM Tile" "DSPs"} {
-    foreach linea [split $txt "\n"] {
-        if {[string match "|*$fila*|*" $linea]} {
-            set campos [split $linea "|"]
-            set v [string trim [lindex $campos 2]]
-            puts [format "  %-24s %8s   (%.1f por canal)" $fila $v [expr {double($v)/$fold}]]
+foreach row {"CLB LUTs" "CLB Registers" "LUT as Distributed RAM" "Block RAM Tile" "DSPs"} {
+    foreach line [split $txt "\n"] {
+        if {[string match "|*$row*|*" $line]} {
+            set fields [split $line "|"]
+            set v [string trim [lindex $fields 2]]
+            puts [format "  %-24s %8s   (%.1f per channel)" $row $v [expr {double($v)/$fold}]]
             break
         }
     }

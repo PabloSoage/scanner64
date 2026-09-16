@@ -1,24 +1,26 @@
 # ---------------------------------------------------------------------------
-# sweep_fs.ps1 — La curva canales-contra-Fs. El experimento central.
+# sweep_fs.ps1 - The channels-against-Fs curve. The central experiment.
 #
-# Los integradores procesan una muestra por ciclo, asi que a menos ancho de
-# banda caben mas canales en la misma area:
+# The integrators process one sample per cycle, so the less bandwidth you need
+# the more channels fit in the same area:
 #
 #     FOLD = floor(Fclk / Fs)
 #
-# Con Fclk = 100 MHz: 100 MSPS -> 1, 50 -> 2, 25 -> 4, 12,5 -> 8, 6,25 -> 16.
+# With Fclk = 100 MHz: 100 MSPS -> 1, 50 -> 2, 25 -> 4, 12.5 -> 8, 6.25 -> 16.
 #
-# DOS PUNTOS DE N_CH POR CADA FOLD, y no por prudencia: con uno solo el coste
-# fijo del diseno --AXI, generador, pegamento-- se reparte entre los canales que
-# haya y falsea el coste marginal. Con dos puntos sale por diferencia:
+# TWO N_CH POINTS PER FOLD, and not out of caution: with only one, the design's
+# fixed cost -- AXI, generator, glue -- gets spread over however many channels
+# there are and falsifies the marginal cost. With two points it comes out by
+# difference:
 #
-#     marginal = (coste(64) - coste(16)) / 48
+#     marginal = (cost(64) - cost(16)) / 48
 #
-# y de ahi el techo, que es lo que responde "cuantos canales caben a esta Fs".
+# and from that the ceiling, which is what answers "how many channels fit at
+# this Fs".
 #
 #     powershell -File syn/sweep_fs.ps1
 #
-# Deja C:/kv/fs/resumen.csv y un informe de utilizacion por punto.
+# Leaves C:/kv/fs/summary.csv and one utilisation report per point.
 # ---------------------------------------------------------------------------
 
 $vivado = "E:\AMDDesignTools\2026.1\Vivado\bin\vivado.bat"
@@ -29,45 +31,45 @@ New-Item -ItemType Directory -Force $base | Out-Null
 Copy-Item "E:\Repos\scanner64\rtl\sin_lut.mem" $base -Force
 Set-Location $base
 
-$csv = "$base/resumen.csv"
+$csv = "$base/summary.csv"
 "fold,fs_msps,n_ch,lut,ff,bram,dsp,wns_ns,fmax_mhz" | Set-Content $csv
 
-function Di($m) { "$(Get-Date -Format HH:mm:ss)  $m" | Tee-Object -FilePath "$base/sweep.log" -Append }
+function Say($m) { "$(Get-Date -Format HH:mm:ss)  $m" | Tee-Object -FilePath "$base/sweep.log" -Append }
 
-Di "=== barrido de Fs: FOLD 1 2 4 8 16, con N_CH 16 y 64 ==="
+Say "=== Fs sweep: FOLD 1 2 4 8 16, with N_CH 16 and 64 ==="
 
 foreach ($fold in 1, 2, 4, 8, 16) {
     $fs = 100.0 / $fold
     foreach ($n in 16, 64) {
         $tag = "f${fold}_n${n}"
-        Di "--- FOLD=$fold (Fs=$fs MSPS)  N_CH=$n"
+        Say "--- FOLD=$fold (Fs=$fs MSPS)  N_CH=$n"
         & $vivado -mode batch -nojournal -notrace -source $tcl -tclargs $n $fold `
             *> "$base/$tag.log"
 
         $txt = Get-Content "$base/$tag.log" -Raw
-        function Campo($nombre) {
-            if ($txt -match "(?m)^\s+$nombre\s+([0-9.]+)") { $Matches[1] } else { "" }
+        function Field($name) {
+            if ($txt -match "(?m)^\s+$name\s+([0-9.]+)") { $Matches[1] } else { "" }
         }
-        $lut  = Campo "CLB LUTs"
-        $ff   = Campo "CLB Registers"
-        $bram = Campo "Block RAM Tile"
-        $dsp  = Campo "DSPs"
+        $lut  = Field "CLB LUTs"
+        $ff   = Field "CLB Registers"
+        $bram = Field "Block RAM Tile"
+        $dsp  = Field "DSPs"
         $wns  = ""; $fmax = ""
         if ($txt -match "WNS\s+(-?[0-9.]+) ns\s+->\s+Fmax ([0-9.]+)") {
             $wns = $Matches[1]; $fmax = $Matches[2]
         }
         if ($lut -eq "") {
-            Di "    FALLO: sin utilizacion. Ver $tag.log"
+            Say "    FAILED: no utilisation. See $tag.log"
         } else {
             "$fold,$fs,$n,$lut,$ff,$bram,$dsp,$wns,$fmax" | Add-Content $csv
-            Di "    LUT $lut  FF $ff  BRAM $bram  DSP $dsp  Fmax $fmax MHz"
+            Say "    LUT $lut  FF $ff  BRAM $bram  DSP $dsp  Fmax $fmax MHz"
         }
-        # El informe, con nombre propio: fold_check.tcl los llama igual.
+        # The report, under its own name: fold_check.tcl calls them all alike.
         if (Test-Path "$base/${n}ch_fold${fold}_util.rpt") {
             Move-Item "$base/${n}ch_fold${fold}_util.rpt" "$base/$tag`_util.rpt" -Force
         }
     }
 }
 
-Di "=== terminado ==="
-Get-Content $csv | ForEach-Object { Di "  $_" }
+Say "=== finished ==="
+Get-Content $csv | ForEach-Object { Say "  $_" }

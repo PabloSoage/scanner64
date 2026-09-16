@@ -1,19 +1,20 @@
 # ---------------------------------------------------------------------------
-# ooc_channel.tcl — Sintesis out-of-context de UN ddc_channel.
+# ooc_channel.tcl - Out-of-context synthesis of ONE ddc_channel.
 #
-# Mide el coste del ladrillo que despues se replica N veces en scanner_top.
-# No crea proyecto: solo lee el RTL, sintetiza y saca los informes.
+# Measures the cost of the brick that later gets replicated N times inside
+# scanner_top. It creates no project: it just reads the RTL, synthesises and
+# writes the reports.
 #
-# Uso (desde un directorio de trabajo con RUTA CORTA, ver aviso abajo):
+# Usage (from a working directory with a SHORT PATH, see the warning below):
 #     cp <repo>/rtl/sin_lut.mem .
 #     vivado -mode batch -nojournal -notrace -source <repo>/syn/ooc_channel.tcl
 #
-# AVISO EN WINDOWS: si el directorio de trabajo tiene una ruta larga (~250
-# caracteres) las herramientas fallan con "Failed to compile generated C file".
-# No es el diseno: es el gcc interno. Trabaja desde una ruta corta.
+# WINDOWS WARNING: if the working directory has a long path (~250 characters)
+# the tools fail with "Failed to compile generated C file". It is not the
+# design: it is the internal gcc. Work from a short path.
 #
-# La LUT del NCO (sin_lut.mem) tiene que estar en el directorio de trabajo,
-# porque nco.v la carga con $readmemh en tiempo de elaboracion.
+# The NCO LUT (sin_lut.mem) has to be in the working directory, because nco.v
+# loads it with $readmemh at elaboration time.
 # ---------------------------------------------------------------------------
 
 set part xck26-sfvc784-2LV-c
@@ -25,8 +26,8 @@ read_verilog -sv [list \
     [file join $rtl cic_decim.v] \
     [file join $rtl ddc_channel.v]]
 
-# El reloj va en un XDC leido con read_xdc: create_clock suelto en el Tcl falla
-# con "No open design", porque necesita un diseno ya abierto.
+# The clock goes in an XDC read with read_xdc: a bare create_clock in the Tcl
+# fails with "No open design", because it needs a design already open.
 read_xdc [file join $here clk.xdc]
 
 synth_design -top ddc_channel -part $part -mode out_of_context
@@ -37,6 +38,6 @@ report_timing_summary  -delay_type max -file timing.rpt
 set wns  [get_property SLACK [get_timing_paths -delay_type max]]
 set fmax [expr {1000.0 / (10.0 - $wns)}]
 
-puts "=== ddc_channel, out-of-context sobre $part ==="
+puts "=== ddc_channel, out-of-context on $part ==="
 puts [format "  WNS  = %.3f ns" $wns]
-puts [format "  Fmax = %.2f MHz  (post-sintesis, sin rutar: optimista)" $fmax]
+puts [format "  Fmax = %.2f MHz  (post-synthesis, not routed: optimistic)" $fmax]

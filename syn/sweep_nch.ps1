@@ -1,22 +1,22 @@
 # ---------------------------------------------------------------------------
-# sweep_nch.ps1 - Un bitstream por cada numero de canales.
+# sweep_nch.ps1 - One bitstream per channel count.
 #
-# Da la materia prima de dos cosas a la vez:
-#   D6  la columna de vatios: hay que medir el INA260 con cada diseno cargado.
-#   B8b la curva canales-contra-Fs, que es el resultado central de la memoria.
+# It provides the raw material for two things at once:
+#   D6  the watts column: the INA260 has to be measured with each design loaded.
+#   B8b the channels-against-Fs curve, which is the central result.
 #
-# Se lanza y se olvida. Va dejando los artefactos segun terminan y borra el
-# proyecto de cada punto para no comerse el disco -- pero SOLO despues de
-# comprobar que el .bit.bin esta copiado. La primera version borraba antes de
-# comprobar y perdio el punto de 4 canales entero.
+# Launch it and forget it. It drops the artefacts as each point finishes and
+# deletes that point's project so it does not eat the disk -- but ONLY after
+# checking the .bit.bin has been copied. The first version deleted before
+# checking and lost the whole 4-channel point.
 #
 #     powershell -File syn/sweep_nch.ps1
 #
-# Deja en C:/kv/sweep/results, por cada N:
-#     scanner64_nN.bit.bin   listo para fpgautil
-#     scanner64_nN.bit       por si hace falta rehacer el .bin
-#     util_nN.rpt            utilizacion post-implementacion
-#     resumen.csv            N, WNS, Fmax
+# Leaves, in C:/kv/sweep/results, for each N:
+#     scanner64_nN.bit.bin   ready for fpgautil
+#     scanner64_nN.bit       in case the .bin has to be rebuilt
+#     util_nN.rpt            post-implementation utilisation
+#     summary.csv            N, WNS, Fmax
 # ---------------------------------------------------------------------------
 
 $vivado  = "E:\AMDDesignTools\2026.1\Vivado\bin\vivado.bat"
@@ -27,20 +27,20 @@ $res     = "$base/results"
 
 New-Item -ItemType Directory -Force $res | Out-Null
 $log = "$res/sweep.log"
-function Di($m) {
+function Say($m) {
     $t = Get-Date -Format "HH:mm:ss"
     "$t  $m" | Tee-Object -FilePath $log -Append
 }
 
-$csv = "$res/resumen.csv"
+$csv = "$res/summary.csv"
 if (-not (Test-Path $csv)) { "N_CH,WNS_ns,Fmax_MHz" | Set-Content $csv }
 
-Di "=== barrido de N_CH: 4 8 16 32 64 ==="
+Say "=== N_CH sweep: 4 8 16 32 64 ==="
 
 foreach ($n in 4, 8, 16, 32, 64) {
     $dir  = "$base/n$n"
     $vlog = "$res/vivado_n$n.log"
-    Di "--- N_CH = $n : sintetizando"
+    Say "--- N_CH = $n : synthesising"
     if (Test-Path $dir) { Remove-Item -Recurse -Force $dir }
 
     & $vivado -mode batch -notrace -source $tcl -tclargs $dir $n *> $vlog
@@ -48,12 +48,12 @@ foreach ($n in 4, 8, 16, 32, 64) {
     $bit = Get-ChildItem "$dir/scanner64_kria.runs/impl_1/*.bit" -ErrorAction SilentlyContinue |
            Select-Object -First 1
     if (-not $bit) {
-        Di "--- N_CH = $n : FALLO en Vivado. Ver $vlog. El proyecto NO se borra."
+        Say "--- N_CH = $n : Vivado FAILED. See $vlog. The project is NOT deleted."
         continue
     }
 
-    # bootgen deja el .bin JUNTO AL .bit DE ENTRADA, no en el directorio de
-    # trabajo. Por eso se busca ahi y no al nivel de arriba.
+    # bootgen leaves the .bin NEXT TO THE INPUT .bit, not in the working
+    # directory. That is why it is looked for there and not one level up.
     $bif = "$dir/pl.bif"
     "all:`n{`n    [destination_device = pl] $($bit.FullName)`n}" |
         Set-Content -Encoding ASCII $bif
@@ -62,7 +62,7 @@ foreach ($n in 4, 8, 16, 32, 64) {
     $bin = Get-ChildItem "$($bit.Directory)/*.bit.bin" -ErrorAction SilentlyContinue |
            Select-Object -First 1
     if (-not $bin) {
-        Di "--- N_CH = $n : FALLO en bootgen. El proyecto NO se borra."
+        Say "--- N_CH = $n : bootgen FAILED. The project is NOT deleted."
         continue
     }
 
@@ -72,20 +72,20 @@ foreach ($n in 4, 8, 16, 32, 64) {
         Copy-Item "$dir/utilization.rpt" "$res/util_n$n.rpt" -Force
     }
 
-    # El timing sale del propio log de Vivado, que ya lo imprime.
+    # The timing comes out of Vivado's own log, which already prints it.
     $wns = $null; $fmx = $null
     foreach ($l in Get-Content $vlog) {
-        if ($l -match 'WNS a 100 MHz\s*:\s*(-?[0-9.]+)')  { $wns = $Matches[1] }
+        if ($l -match 'WNS at 100 MHz\s*:\s*(-?[0-9.]+)') { $wns = $Matches[1] }
         if ($l -match 'Fmax\s*:\s*([0-9.]+)')             { $fmx = $Matches[1] }
     }
     "$n,$wns,$fmx" | Add-Content $csv
-    Di "--- N_CH = $n : listo. WNS $wns ns, Fmax $fmx MHz"
+    Say "--- N_CH = $n : done. WNS $wns ns, Fmax $fmx MHz"
 
-    # Ahora si: el artefacto esta a salvo fuera del proyecto.
+    # Now, and only now: the artefact is safe outside the project.
     Remove-Item -Recurse -Force $dir -ErrorAction SilentlyContinue
 }
 
-Di "=== barrido terminado ==="
-Get-ChildItem $res -Filter "*.bit.bin" | ForEach-Object { Di "  $($_.Name)" }
-Di "resumen:"
-Get-Content $csv | ForEach-Object { Di "  $_" }
+Say "=== sweep finished ==="
+Get-ChildItem $res -Filter "*.bit.bin" | ForEach-Object { Say "  $($_.Name)" }
+Say "summary:"
+Get-Content $csv | ForEach-Object { Say "  $_" }

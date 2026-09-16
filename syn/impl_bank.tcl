@@ -4,7 +4,7 @@ set srcs [lrange $argv 1 end]
 read_verilog -sv $srcs
 read_xdc clk.xdc
 synth_design -top scanner_top -part $part -mode out_of_context -generic N_CH=$n
-# En OOC hay que decirle de donde entra el reloj para que modele el skew.
+# In OOC you have to say where the clock comes in, so the skew gets modelled.
 set_property HD.CLK_SRC BUFGCTRL_X0Y0 [get_ports clk]
 opt_design
 place_design
