@@ -1,23 +1,26 @@
 #!/usr/bin/env python3
 """
-Comprueba el RTL sin simulador Verilog.
+Checks the RTL without a Verilog simulator.
 
-En esta maquina no hay iverilog ni verilator, asi que el RTL no se puede
-simular. Este fichero es lo mas parecido honesto: una transcripcion a Python
-de la SEMANTICA del Verilog tal y como esta escrito — con asignaciones no
-bloqueantes, es decir, todas las lecturas usan el valor del registro ANTES del
-flanco — y una comparacion contra los vectores dorados de tb/vectors/.
+This was written when the machine had no simulator at all, so the RTL could not
+be run. It is the most honest substitute: a Python transcription of the
+SEMANTICS of the Verilog exactly as written -- with non-blocking assignments,
+that is, every read uses the register value from BEFORE the edge -- compared
+against the golden vectors in tb/vectors/.
 
-La diferencia con ddc_model.py es la direccion de la transcripcion:
-  ddc_model.py  se escribio primero, y de el salio el RTL.
-  rtl_check.py  se escribe LEYENDO el RTL, y se compara contra los vectores.
+There is a simulator now (the testbenches in tb/ run under XSim and pass), but
+this check is still worth keeping, because the direction of the transcription
+is what makes it independent:
+  ddc_model.py  was written first, and the RTL came out of it.
+  rtl_check.py  is written by READING the RTL, and compared against the
+                vectors.
 
-Si las dos coinciden, la probabilidad de un error de transcripcion baja mucho.
-Lo que esto NO comprueba: sintesis, cierre de tiempos, uso de recursos, y
-cualquier cosa que dependa del comportamiento real de las herramientas. Para
-eso hay que ejecutar tb/tb_ddc_channel.v en Vivado o iverilog.
+If the two agree, the chance of a transcription error drops a lot.
+What this does NOT check: synthesis, timing closure, resource usage, and
+anything that depends on how the tools actually behave. For that, run
+tb/tb_ddc_channel.v under Vivado or iverilog.
 
-Uso:
+Usage:
     py rtl_check.py
 """
 
@@ -35,7 +38,7 @@ VEC = os.path.join(ROOT, "tb", "vectors")
 
 
 def read_hex(path, bits):
-    """Lee un fichero estilo $readmemh y devuelve enteros con signo."""
+    """Reads a $readmemh-style file and returns signed integers."""
     out = []
     with open(path) as fh:
         for line in fh:
@@ -46,14 +49,14 @@ def read_hex(path, bits):
 
 
 # ---------------------------------------------------------------------------
-# Transcripcion de rtl/nco.v
+# Transcription of rtl/nco.v
 # ---------------------------------------------------------------------------
 
 class RtlNco:
-    """nco.v — acumulador de fase + LUT de doble puerto.
+    """nco.v - phase accumulator + dual-port LUT.
 
-    Ojo: en el RTL cos_o/sin_o son REGISTROS, asi que salen un ciclo despues
-    de la fase que los genero.
+    Note: in the RTL cos_o/sin_o are REGISTERS, so they come out one cycle
+    after the phase that generated them.
     """
 
     QUARTER = 1 << (LUT_ADDR_W - 2)
@@ -71,18 +74,18 @@ class RtlNco:
             return
         addr_cos = self.phase >> (PHASE_W - LUT_ADDR_W)
         addr_sin = (addr_cos - self.QUARTER) & self.AMASK
-        # No bloqueantes: se calculan con el valor previo de phase.
+        # Non-blocking: computed with the previous value of phase.
         self.cos_o = SIN_LUT[addr_cos]
         self.sin_o = SIN_LUT[addr_sin]
         self.phase = (self.phase + self.ftw) & self.PMASK
 
 
 # ---------------------------------------------------------------------------
-# Transcripcion de rtl/cic_decim.v
+# Transcription of rtl/cic_decim.v
 # ---------------------------------------------------------------------------
 
 class RtlCic:
-    """cic_decim.v — cascadas registradas, desbordamiento envolvente."""
+    """cic_decim.v - registered cascades, wraparound overflow."""
 
     def __init__(self):
         self.integ = [0] * CIC_N
@@ -93,11 +96,11 @@ class RtlCic:
         self.out_data = 0
 
     def tick(self, in_valid, in_data):
-        # ---- combinatorio ----
+        # ---- combinational ----
         integ_last_next = wrap(self.integ[CIC_N-1] + self.integ[CIC_N-2], CIC_W)
         decim_now = in_valid and (self.cnt == CIC_R - 1)
 
-        # ---- secuencial: todo se calcula con los valores PREVIOS ----
+        # ---- sequential: everything computed from the PREVIOUS values ----
         new_integ = list(self.integ)
         new_cnt = self.cnt
         if in_valid:
@@ -126,11 +129,11 @@ class RtlCic:
 
 
 # ---------------------------------------------------------------------------
-# Transcripcion de rtl/ddc_channel.v
+# Transcription of rtl/ddc_channel.v
 # ---------------------------------------------------------------------------
 
 class RtlDdcChannel:
-    """Encadena nco + mezclador registrado + dos CIC, como el RTL."""
+    """Chains nco + registered mixer + two CICs, the way the RTL does."""
 
     def __init__(self, ftw):
         self.nco = RtlNco(ftw)
@@ -139,24 +142,24 @@ class RtlDdcChannel:
         self.mix_i = 0
         self.mix_q = 0
         self.mix_valid = False
-        self.x_d1 = 0          # retardo para alinear con el registro del NCO
+        self.x_d1 = 0          # delay to line up with the NCO register
         self.v_d1 = False
 
     def tick(self, in_valid, x):
-        # Etapa 1: NCO (registrado) y retardo de la muestra para alinearla.
+        # Stage 1: NCO (registered) and the sample delay that lines it up.
         cos_v, sin_v = self.nco.cos_o, self.nco.sin_o
         xd, vd = self.x_d1, self.v_d1
 
-        # Etapa 2: mezclador (registrado)
+        # Stage 2: mixer (registered)
         new_mix_i = saturate((xd * cos_v) >> (LUT_W - 1), MIX_W)
         new_mix_q = saturate((-xd * sin_v) >> (LUT_W - 1), MIX_W)
         new_mix_valid = vd
 
-        # Etapa 3: CIC, con lo que el mezclador saco el ciclo anterior
+        # Stage 3: CIC, with what the mixer put out on the previous cycle
         self.cic_i.tick(self.mix_valid, self.mix_i)
         self.cic_q.tick(self.mix_valid, self.mix_q)
 
-        # Avance de los registros
+        # Advance the registers
         self.nco.tick(in_valid)
         self.x_d1, self.v_d1 = x, in_valid
         self.mix_i, self.mix_q, self.mix_valid = new_mix_i, new_mix_q, new_mix_valid
@@ -168,32 +171,32 @@ class RtlDdcChannel:
 
 
 # ---------------------------------------------------------------------------
-# Comprobacion contra los vectores dorados
+# Check against the golden vectors
 # ---------------------------------------------------------------------------
 
 def main():
     for f in ("stim.hex", "gold_i.hex", "gold_q.hex", "params.vh"):
         if not os.path.exists(os.path.join(VEC, f)):
-            print(f"Faltan vectores. Ejecuta primero:  py gen_vectors.py")
+            print(f"Vectors missing. Run this first:  py gen_vectors.py")
             return 1
 
     stim = read_hex(os.path.join(VEC, "stim.hex"), IN_W)
     gold_i = read_hex(os.path.join(VEC, "gold_i.hex"), OUT_W)
     gold_q = read_hex(os.path.join(VEC, "gold_q.hex"), OUT_W)
 
-    # La palabra de sintonia se lee de params.vh para no duplicarla.
+    # The tuning word is read from params.vh so it is not duplicated.
     ftw = None
     with open(os.path.join(VEC, "params.vh")) as fh:
         for line in fh:
             if "P_FTW" in line and "'h" in line:
                 ftw = int(line.split("'h")[1].split(";")[0].strip(), 16)
     if ftw is None:
-        print("No se pudo leer P_FTW de params.vh")
+        print("Could not read P_FTW from params.vh")
         return 1
 
-    print("Comprobando la semantica del RTL contra los vectores dorados")
-    print(f"  estimulo : {len(stim)} muestras")
-    print(f"  esperado : {len(gold_i)} salidas I/Q")
+    print("Checking the RTL semantics against the golden vectors")
+    print(f"  stimulus : {len(stim)} samples")
+    print(f"  expected : {len(gold_i)} I/Q outputs")
     print(f"  FTW      : 0x{ftw:08x}")
     print()
 
@@ -204,8 +207,8 @@ def main():
         if y is not None:
             got.append(y)
 
-    # El RTL tiene latencia de pipeline (NCO + mezclador), asi que produce
-    # menos salidas o desplazadas. Buscamos el desplazamiento que alinea.
+    # The RTL has pipeline latency (NCO + mixer), so it produces fewer outputs,
+    # or shifted ones. We look for the shift that lines them up.
     best_shift, best_bad = None, None
     for shift in range(0, 6):
         n = min(len(gold_i), len(got) - shift)
@@ -217,27 +220,27 @@ def main():
             best_bad, best_shift = bad, shift
 
     n = min(len(gold_i), len(got) - best_shift)
-    comparadas = n - 8
-    print(f"  salidas del RTL     : {len(got)}")
-    print(f"  desplazamiento pipe : {best_shift} muestras")
-    print(f"  comparadas          : {comparadas}")
-    print(f"  discrepancias       : {best_bad}")
+    compared = n - 8
+    print(f"  RTL outputs      : {len(got)}")
+    print(f"  pipeline shift   : {best_shift} samples")
+    print(f"  compared         : {compared}")
+    print(f"  mismatches       : {best_bad}")
     print()
 
     if best_bad == 0:
-        print("RESULTADO: OK — la semantica del RTL coincide con el modelo verificado.")
+        print("RESULT: OK - the RTL semantics agree with the verified model.")
         print()
-        print("AVISO: esto NO sustituye a una simulacion. No comprueba sintesis,")
-        print("cierre de tiempos ni uso de recursos. Ejecuta tb/tb_ddc_channel.v")
-        print("en Vivado (o iverilog) antes de fiarte del diseno.")
+        print("NOTE: this is NOT a substitute for a simulation. It does not check")
+        print("synthesis, timing closure or resource usage. Run tb/tb_ddc_channel.v")
+        print("under Vivado (or iverilog) before trusting the design.")
         return 0
 
-    print("RESULTADO: FALLO — el RTL no coincide con el modelo.")
+    print("RESULT: FAIL - the RTL does not agree with the model.")
     for k in range(8, min(n, 20)):
         g, r = (gold_i[k], gold_q[k]), got[k + best_shift]
-        marca = "  " if g == r else "<-"
-        print(f"  [{k:3d}] esperado I={g[0]:8d} Q={g[1]:8d}   "
-              f"rtl I={r[0]:8d} Q={r[1]:8d} {marca}")
+        mark = "  " if g == r else "<-"
+        print(f"  [{k:3d}] expected I={g[0]:8d} Q={g[1]:8d}   "
+              f"rtl I={r[0]:8d} Q={r[1]:8d} {mark}")
     return 1
 
 

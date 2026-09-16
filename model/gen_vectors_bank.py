@@ -1,27 +1,27 @@
 #!/usr/bin/env python3
 """
-Genera los vectores dorados del BANCO de canales (scanner_top), a partir del
-mismo modelo bit-exacto que ya valida un canal suelto.
+Generates the golden vectors for the channel BANK (scanner_top), from the same
+bit-exact model that already validates a single channel.
 
-Lo que prueba el banco y no prueba el canal:
-    - que N canales con sintonias distintas no se pisen entre si
-    - que cfg_we escribe la palabra de sintonia en el canal correcto
-    - que el medidor de potencia acumula, congela y reinicia bien
-    - que el escaner de verdad DISCRIMINA: los canales sintonizados a un tono
-      miden potencia alta y los sintonizados al vacio, baja
+What the bank tests and the channel does not:
+    - that N channels with different tunings do not step on each other
+    - that cfg_we writes the tuning word into the right channel
+    - that the power meter accumulates, freezes and restarts properly
+    - that the scanner really does DISCRIMINATE: channels tuned to a tone
+      measure high power and those tuned to empty band measure low
 
-Escenario: la entrada lleva dos tonos (10 y 15 MHz). Se sintonizan cuatro
-canales, dos sobre los tonos y dos sobre bandas vacias.
+Scenario: the input carries two tones (10 and 15 MHz). Four channels are tuned,
+two onto the tones and two onto empty bands.
 
-Salidas:
-    tb/vectors/bank_ftw.hex      N_CH palabras de sintonia
-    tb/vectors/bank_gold.hex     I y Q esperados, por bloques de canal
-    tb/vectors/bank_pwr.hex      valor esperado de rd_pwr por canal
-    tb/vectors/params_bank.vh    parametros del testbench del banco
+Outputs:
+    tb/vectors/bank_ftw.hex      N_CH tuning words
+    tb/vectors/bank_gold.hex     expected I and Q, in per-channel blocks
+    tb/vectors/bank_pwr.hex      expected rd_pwr value per channel
+    tb/vectors/params_bank.vh    parameters for the bank testbench
 
-Reutiliza stim.hex, que genera gen_vectors.py. Ejecuta aquel primero.
+Reuses stim.hex, which gen_vectors.py produces. Run that one first.
 
-Uso:
+Usage:
     py gen_vectors_bank.py
 """
 
@@ -39,23 +39,23 @@ VEC = os.path.join(ROOT, "tb", "vectors")
 
 FS = 100_000_000.0
 
-# Tonos presentes en el estimulo (los mismos que genera gen_vectors.py).
+# Tones present in the stimulus (the same ones gen_vectors.py produces).
 F_IN = 10_000_000.0
 F_OUT = 15_000_000.0
 AMP_IN = 0.40
 AMP_OUT = 0.40
 
-# Sintonias del banco. Dos sobre los tonos, dos sobre bandas vacias.
+# Bank tunings. Two onto the tones, two onto empty bands.
 TUNES = [
-    (10_000_000.0, "tono A, en banda"),
-    (15_000_000.0, "tono B, el que el canal 0 rechaza"),
-    (20_000_000.0, "vacio"),
-    (5_000_000.0, "vacio"),
+    (10_000_000.0, "tone A, in band"),
+    (15_000_000.0, "tone B, the one channel 0 rejects"),
+    (20_000_000.0, "empty"),
+    (5_000_000.0, "empty"),
 ]
 N_CH = len(TUNES)
 
-PWR_LEN = 16                 # muestras por ventana de medida
-N_OUT = 48                   # salidas por canal, como en el canal suelto
+PWR_LEN = 16                 # samples per measurement window
+N_OUT = 48                   # outputs per channel, as in the single channel
 N_IN = N_OUT * CIC_R
 PWR_W = 48
 
@@ -69,11 +69,11 @@ def write_lines(path, lines):
     with open(path, "w", newline="\n") as fh:
         fh.write("\n".join(lines))
         fh.write("\n")
-    print(f"  {os.path.relpath(path, ROOT):32} {len(lines):6d} lineas")
+    print(f"  {os.path.relpath(path, ROOT):32} {len(lines):6d} lines")
 
 
 def make_stim():
-    """El mismo estimulo que gen_vectors.py: dos tonos sumados y saturados."""
+    """The same stimulus as gen_vectors.py: two tones summed and saturated."""
     peak = (1 << (IN_W - 1)) - 1
     out = []
     for k in range(N_IN):
@@ -84,10 +84,11 @@ def make_stim():
 
 
 def expected_power(gold):
-    """Replica EXACTAMENTE la aritmetica del medidor de scanner_top.
+    """Replicates EXACTLY the arithmetic of the scanner_top power meter.
 
-    El RTL congela en pwr_hold la suma de PWR_LEN muestras y reinicia. Lo que
-    se lee al final por rd_pwr es la ultima ventana completa, no el total.
+    The RTL freezes the sum of PWR_LEN samples into pwr_hold and restarts. What
+    you read at the end through rd_pwr is the last complete window, not the
+    total.
     """
     acc = cnt = hold = 0
     done = False
@@ -105,7 +106,7 @@ def expected_power(gold):
 
 
 def main():
-    print("Generando vectores del banco desde el modelo verificado")
+    print("Generating bank vectors from the verified model")
     print()
 
     stim = make_stim()
@@ -115,19 +116,19 @@ def main():
     for f_tune, _ in TUNES:
         ch = DDCChannel(f_tune, FS)
         gold = [y for y in (ch.push(x) for x in stim) if y is not None]
-        assert len(gold) == N_OUT, f"esperadas {N_OUT} salidas, salieron {len(gold)}"
+        assert len(gold) == N_OUT, f"expected {N_OUT} outputs, got {len(gold)}"
         gold_per_ch.append(gold)
         hold, done = expected_power(gold)
-        assert done, "PWR_LEN mayor que el numero de salidas: no cierra ventana"
+        assert done, "PWR_LEN larger than the number of outputs: no window closes"
         pwr_per_ch.append(hold)
 
-    # --- Sintonias -----------------------------------------------------
+    # --- Tunings -------------------------------------------------------
     write_lines(os.path.join(VEC, "bank_ftw.hex"),
                 [twos_hex(tuning_word(f, FS), PHASE_W) for f, _ in TUNES])
 
-    # --- Vectores dorados, por bloques de canal ------------------------
-    # El canal k ocupa [k*N_OUT, (k+1)*N_OUT). Un solo $readmemh en el
-    # testbench, porque $readmemh necesita un nombre de fichero constante.
+    # --- Golden vectors, in per-channel blocks --------------------------
+    # Channel k occupies [k*N_OUT, (k+1)*N_OUT). A single $readmemh in the
+    # testbench, because $readmemh needs a constant file name.
     lines_i, lines_q = [], []
     for gold in gold_per_ch:
         lines_i += [twos_hex(i, OUT_W) for i, _ in gold]
@@ -135,13 +136,13 @@ def main():
     write_lines(os.path.join(VEC, "bank_gold_i.hex"), lines_i)
     write_lines(os.path.join(VEC, "bank_gold_q.hex"), lines_q)
 
-    # --- Potencia esperada ---------------------------------------------
+    # --- Expected power -------------------------------------------------
     write_lines(os.path.join(VEC, "bank_pwr.hex"),
                 [twos_hex(p, PWR_W) for p in pwr_per_ch])
 
-    # --- Parametros -----------------------------------------------------
+    # --- Parameters ------------------------------------------------------
     params = [
-        "// Generado por model/gen_vectors_bank.py - no editar a mano.",
+        "// Generated by model/gen_vectors_bank.py - do not edit by hand.",
         "",
         f"localparam integer PB_N_CH    = {N_CH};",
         f"localparam integer PB_N_STIM  = {len(stim)};",
@@ -151,25 +152,25 @@ def main():
     ]
     write_lines(os.path.join(VEC, "params_bank.vh"), params)
 
-    # --- Resumen: comprobar que el escenario discrimina de verdad -------
+    # --- Summary: check the scenario really does discriminate ------------
     print()
-    print("  Canal  sintonia      potencia media en regimen   escenario")
+    print("  Channel  tuning       mean steady-state power    scenario")
     steady_db = []
-    for k, (f_tune, nota) in enumerate(TUNES):
+    for k, (f_tune, note) in enumerate(TUNES):
         steady = gold_per_ch[k][8:]
         p = sum(power_db(i, q) for i, q in steady) / len(steady)
         steady_db.append(p)
-        print(f"    {k}    {f_tune/1e6:5.1f} MHz    {p:9.2f} dBFS            {nota}")
+        print(f"    {k}    {f_tune/1e6:5.1f} MHz    {p:9.2f} dBFS            {note}")
 
-    ocupados = min(steady_db[0], steady_db[1])
-    vacios = max(steady_db[2], steady_db[3])
-    margen = ocupados - vacios
+    occupied = min(steady_db[0], steady_db[1])
+    empty = max(steady_db[2], steady_db[3])
+    margin = occupied - empty
     print()
-    print(f"  Margen entre canales con tono y canales vacios: {margen:.1f} dB")
-    if margen > 40.0:
-        print("  -> el banco discrimina. Vectores validos.")
+    print(f"  Margin between channels with a tone and empty channels: {margin:.1f} dB")
+    if margin > 40.0:
+        print("  -> the bank discriminates. Vectors valid.")
     else:
-        print("  -> AVISO: margen insuficiente, el test de discriminacion no vale")
+        print("  -> WARNING: insufficient margin, the discrimination test is worthless")
 
 
 if __name__ == "__main__":
