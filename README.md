@@ -29,6 +29,39 @@ and the same power budget.
 
 ---
 
+## What it looks like in Vivado
+
+All of these come from Vivado 2026.1, produced by `syn/render_schematic.tcl` and
+`syn/render_device.tcl`.
+
+**The 16-channel bitstream, routed.** Each channel's front end (NCO, mixer and integrators) has
+its own colour. The shared comb banks are white and the signal source is grey. The teal block
+on the left is the PS, which is hard silicon. Sixteen channels use a small corner of the
+XCK26: area is what a channel costs here, not time.
+
+<p align="center"><img src="media/device_16ch.png" width="600" alt="Device view of the routed 16-channel design on the XCK26, every channel in its own colour"></p>
+
+**The block design.** The PS, one AXI4-Lite interconnect and `scanner_axi`. No DMA.
+
+![Block design: Zynq UltraScale+ MPSoC, AXI interconnect, processor reset and scanner_axi](media/block_design.png)
+
+**One channel (`ddc_channel`).** The front end runs at the input rate. The two comb chains, I
+and Q, run at the decimated rate.
+
+![RTL schematic of ddc_channel: ddc_front feeding two comb_chain blocks](media/ddc_channel.png)
+
+**Its front end (`ddc_front`), elaborated.** From left to right:
+
+- the NCO, with its cosine and sine from the BRAM LUT;
+- the two multipliers;
+- the arithmetic shifts;
+- the saturation to 18 bits;
+- the two CIC integrator chains.
+
+![RTL schematic of ddc_front: NCO, I/Q multipliers, shifts, saturation, CIC integrators](media/ddc_front.png)
+
+---
+
 ## Why this is not a job for a CPU
 
 Worth saying precisely, because the brochure version (*"the FPGA is faster"*) is false: a desktop
@@ -141,8 +174,12 @@ scanner64/
     ├── impl_bank.tcl        Full implementation, for the real Fmax.
     ├── sweep_nch.ps1        One bitstream per channel count.
     ├── sweep_fs.ps1         The channels-against-Fs curve.
+    ├── render_schematic.tcl RTL schematics as SVG (GUI mode), for the README.
+    ├── render_device.tcl    Block design SVG + device view with every channel highlighted.
     └── results/             Reports from the last run.
 ```
+
+The README's pictures are in `media/`.
 
 ---
 
